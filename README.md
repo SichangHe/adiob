@@ -12,6 +12,26 @@ python3 -m http.server 8000
 
 Open `http://localhost:8000` from this directory.
 
+## voice and publication workflow
+
+The preferred local voice path is Kokoro-82M via the `kokoro` Python package. The model card describes Kokoro as an "open-weight TTS model with 82 million parameters" and lists `apache-2.0` licensing. ElevenLabs can be a high-quality commercial API alternative, but it is not the open-source/local workflow in this prototype.
+
+Generate audio only from public-domain, permissively licensed, or user-provided text:
+
+```sh
+uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest data/small-walk.json --out media/sample.m4a --confirm-rights --rough-timings
+```
+
+Publish generated audio as a GitHub release asset and write the release URL into the manifest:
+
+```sh
+scripts/publish-release-audio.sh --confirm-rights -R OWNER/REPO audio-small-walk-v1 data/small-walk.json media/sample.m4a
+```
+
+The release script requires `origin` to match `OWNER/REPO` before a real upload. Add `--clobber` only when replacing an existing release asset is intended.
+
+The Pages UI tries `releaseAudio.url` first when present and falls back to `audio` if the release asset cannot be loaded. The GitHub Pages workflow is in `.github/workflows/pages.yml`.
+
 ## layout
 
 ```text
@@ -24,6 +44,10 @@ Open `http://localhost:8000` from this directory.
 |-- media
 |   |-- cover.png
 |   `-- sample.m4a
+|-- scripts
+|   |-- generate-kokoro-audio.py
+|   |-- publish-release-audio.sh
+|   `-- set-release-audio-url.py
 |-- src
 |   |-- app.js
 |   `-- style.css
@@ -35,6 +59,7 @@ Open `http://localhost:8000` from this directory.
 `data/books.json` points to one or more book manifests. Each manifest contains:
 
 - `audio`: relative path to pre-generated audio
+- `releaseAudio.url`: optional GitHub release asset URL preferred by the UI
 - `cover`: relative path to cover art
 - `segments`: ordered text spans with `startSec` and `endSec`
 

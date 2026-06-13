@@ -1,0 +1,48 @@
+voice and publication workflow
+- lawful input boundary
+  - use public-domain, permissively licensed, or user-provided text and cover assets
+  - keep public deployments limited to content the repo owner may distribute
+  - do not generate public release assets from copyrighted books without distribution rights
+- voice model choice
+  - preferred local path is Kokoro-82M through the `kokoro` Python package
+  - source: Hugging Face says "Kokoro is an open-weight TTS model with 82 million parameters"
+    - https://huggingface.co/hexgrad/Kokoro-82M
+  - source: Hugging Face says "License: apache-2.0"
+    - https://huggingface.co/hexgrad/Kokoro-82M
+  - source: the Kokoro model card says it "delivers comparable quality to larger models"
+    - https://huggingface.co/hexgrad/Kokoro-82M
+  - inference: Kokoro is the right default for this prototype because it is small, local, inspectable, and permissively licensed
+- commercial api distinction
+  - ElevenLabs is a commercial API choice, not the open-source local path used here
+  - source: ElevenLabs documents `POST /v1/text-to-speech/:voice_id`
+    - https://elevenlabs.io/docs/api-reference/text-to-speech/convert
+  - source: ElevenLabs pricing lists Text to Speech "Price per 1K characters"
+    - https://elevenlabs.io/pricing/api
+- generate audio
+  - run from repo root
+  - command
+    - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest data/small-walk.json --out media/sample.m4a --confirm-rights --rough-timings`
+  - `--confirm-rights` is the explicit gate that the source text may be generated and published
+  - `--rough-timings` updates segment times by text length after generation
+  - production-quality alignment should replace rough timings with sentence or word alignment
+- publish release audio
+  - release assets give stable public URLs and avoid making Pages the primary audio host
+  - source: GitHub CLI says `gh release upload <tag> <files>...`
+    - https://cli.github.com/manual/gh_release_upload
+  - dry run
+    - `scripts/publish-release-audio.sh --dry-run -R OWNER/REPO audio-small-walk-v1 data/small-walk.json media/sample.m4a`
+  - publish and write the release url into the manifest
+    - `scripts/publish-release-audio.sh --confirm-rights -R OWNER/REPO audio-small-walk-v1 data/small-walk.json media/sample.m4a`
+  - overwrite an existing release asset only when intended
+    - add `--clobber`
+  - non-dry-run publication requires `origin` to match `OWNER/REPO`
+- publish pages
+  - source: GitHub Pages custom workflow docs
+    - https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
+  - this repo uses `.github/workflows/pages.yml`
+  - the workflow copies static files into `_site`, uploads the Pages artifact, and deploys it
+  - after the release script updates `releaseAudio.url`, commit and push `main`
+- static data contract
+  - `audio` remains the local fallback when `releaseAudio.url` is absent or cannot be loaded
+  - `releaseAudio.url` is tried first by the browser when present
+  - the UI also shows a direct link to the release asset

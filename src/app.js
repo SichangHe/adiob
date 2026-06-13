@@ -6,6 +6,7 @@ const duration = document.querySelector("#duration");
 const forward = document.querySelector("#forward");
 const license = document.querySelector("#book-license");
 const play = document.querySelector("#play");
+const releaseAudio = document.querySelector("#release-audio");
 const scrub = document.querySelector("#scrub");
 const segments = document.querySelector("#segments");
 const title = document.querySelector("#book-title");
@@ -51,11 +52,24 @@ function renderBook(nextBook) {
   license.textContent = book.license;
   cover.src = book.cover;
   cover.alt = `${book.title} cover`;
-  audio.src = book.audio;
+  audio.dataset.releaseFallbackUsed = "0";
+  audio.src = book.releaseAudio?.url || book.audio;
+  renderReleaseAudio(book.releaseAudio);
   scrub.max = String(book.durationSec);
   duration.textContent = fmtTime(book.durationSec);
   segments.replaceChildren(...book.segments.map(renderSegment));
   updateProgress(0);
+}
+
+function renderReleaseAudio(track) {
+  if (!track?.url) {
+    releaseAudio.hidden = true;
+    releaseAudio.removeAttribute("href");
+    return;
+  }
+  releaseAudio.hidden = false;
+  releaseAudio.href = track.url;
+  releaseAudio.textContent = track.asset ? `Release audio: ${track.asset}` : "Release audio";
 }
 
 function renderSegment(segment, index) {
@@ -129,6 +143,14 @@ audio.addEventListener("loadedmetadata", () => {
   const maxSec = Number.isFinite(audio.duration) ? audio.duration : book?.durationSec;
   scrub.max = String(maxSec);
   duration.textContent = fmtTime(maxSec);
+});
+audio.addEventListener("error", () => {
+  if (!book?.releaseAudio?.url || !book.audio || audio.dataset.releaseFallbackUsed === "1") {
+    return;
+  }
+  audio.dataset.releaseFallbackUsed = "1";
+  audio.src = book.audio;
+  audio.load();
 });
 audio.addEventListener("timeupdate", () => updateProgress(audio.currentTime));
 audio.addEventListener("play", () => setPlaying(true));

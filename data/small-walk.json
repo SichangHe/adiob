@@ -6,25 +6,32 @@
   "license": "CC0-1.0 for the sample text, timing data, generated audio, and cover image.",
   "audio": "media/sample.m4a",
   "cover": "media/cover.png",
-  "durationSec": 14.081,
+  "durationSec": 15.175,
   "segments": [
     {
       "id": "s001",
-      "startSec": 0,
-      "endSec": 3.575,
+      "startSec": 0.0,
+      "endSec": 4.613,
       "text": "Morning light found Ada at the station with a notebook and a thermos."
     },
     {
       "id": "s002",
-      "startSec": 3.575,
-      "endSec": 8.525,
+      "startSec": 4.613,
+      "endSec": 9.894,
       "text": "She pressed play, and the next paragraph began exactly where her walk left off."
     },
     {
       "id": "s003",
-      "startSec": 8.525,
-      "endSec": 14.081,
+      "startSec": 9.894,
+      "endSec": 15.175,
       "text": "This tiny sample is original demo text for a public static audiobook prototype."
     }
-  ]
+  ],
+  "voice": {
+    "model": "hexgrad/Kokoro-82M",
+    "tool": "kokoro",
+    "voice": "af_heart",
+    "lang": "a",
+    "timing": "rough text-length allocation"
+  }
 }
