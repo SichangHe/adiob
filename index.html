@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>adiob</title>
+    <link rel="stylesheet" href="src/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="reader" aria-labelledby="book-title">
+        <aside class="panel">
+          <img id="cover" class="cover" alt="" width="320" height="320" />
+          <div class="book-meta">
+            <p class="kicker">adiob</p>
+            <h1 id="book-title">Loading</h1>
+            <p id="book-author"></p>
+          </div>
+          <audio id="audio" preload="metadata"></audio>
+          <div class="transport" aria-label="Playback controls">
+            <button id="back" type="button" aria-label="Back 10 seconds">-10</button>
+            <button id="play" type="button">Play</button>
+            <button id="forward" type="button" aria-label="Forward 10 seconds">+10</button>
+          </div>
+          <div class="timeline">
+            <span id="current-time">0:00</span>
+            <input id="scrub" type="range" min="0" max="0" step="0.01" value="0" aria-label="Timeline" />
+            <span id="duration">0:00</span>
+          </div>
+          <p id="book-license" class="license"></p>
+        </aside>
+        <article id="segments" class="segments" aria-label="Transcript"></article>
+      </section>
+    </main>
+    <script type="module" src="src/app.js"></script>
+  </body>
+</html>

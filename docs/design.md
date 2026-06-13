@@ -1,0 +1,20 @@
+adiob
+- goal
+  - static GitHub Pages audiobook reader prototype
+  - no build step
+  - no server code
+- lawful content boundary
+  - sample assets are original demo assets
+  - public deployments should include only distributable text, audio, and cover art
+- data flow
+  - `data/books.json` selects a manifest
+  - manifest points to audio, cover, and ordered timing segments
+  - UI highlights the segment containing the audio timestamp
+- timing model
+  - `startSec` and `endSec` are seconds from audio start
+  - segments can represent sentences or paragraphs
+  - timings are assumed to be produced before publishing
+- runtime
+  - browser fetches JSON
+  - native audio element owns playback state
+  - custom controls seek the native audio element

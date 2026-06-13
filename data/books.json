@@ -1,0 +1,9 @@
+{
+  "defaultBook": "small-walk",
+  "books": [
+    {
+      "id": "small-walk",
+      "manifest": "data/small-walk.json"
+    }
+  ]
+}
