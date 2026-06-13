@@ -82,7 +82,10 @@ function renderSegment(segment, index) {
   button.dataset.id = segment.id;
   button.dataset.index = String(index);
   button.dataset.startSec = String(segment.startSec);
-  button.textContent = segment.text;
+  const text = document.createElement("span");
+  text.className = "segment-text";
+  text.textContent = segment.text;
+  button.append(text);
   button.addEventListener("click", () => {
     audio.currentTime = segment.startSec;
     audio.play();
