@@ -1,0 +1,26 @@
+ebsco ebook text extraction
+- purpose
+  - extract local plain text from an owned EBSCO EPUB opened in the browser-use Chrome session
+  - keep extraction script reusable for other books on the same viewer
+- browser source
+  - Chrome DevTools endpoint defaults to `http://127.0.0.1:9279`
+  - the script attaches to the open page whose URL contains `/ebook-viewer/`
+- selectors
+  - iframe selector defaults to `#epub-frame`
+  - content selector defaults to `#epub-viewer-content`
+  - next control defaults to `button[aria-label='Next']`
+  - TOC entries use `ebook-toc-navPoint-N-label`
+- local output boundary
+  - write owned-book text under `owned-text/`
+  - `owned-text/` is ignored by git
+  - the script rejects `--out` paths outside repo-local `owned-text/`
+- current book command
+  - `node scripts/extract-ebsco-ebook-text.mjs --start first-toc --out owned-text/the-contrarian.txt`
+- other books on the same site
+  - open the EBSCO EPUB in the same browser-use Chrome window
+  - run the command with a different `--out`
+  - use `--start current` to extract from the visible section
+  - use `--start toc:N` to start from a known TOC entry
+- validation
+  - the script logs section tokens and character counts to stderr
+  - stdout is a JSON summary with output path, section count, character count, and stop reason
