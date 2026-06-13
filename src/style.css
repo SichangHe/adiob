@@ -23,7 +23,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -111,6 +112,7 @@ h1 {
 
 .transport button:hover,
 .transport button:focus-visible,
+.rate-control select:focus-visible,
 .segment:hover,
 .segment:focus-visible {
   border-color: var(--accent);
@@ -121,6 +123,24 @@ h1 {
   border-color: var(--accent-dark);
   color: #ffffff;
   background: var(--accent);
+}
+
+.rate-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: #566461;
+  font-weight: 800;
+}
+
+.rate-control select {
+  min-height: 40px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #102326;
+  background: var(--paper);
 }
 
 .timeline {

@@ -18,3 +18,4 @@ adiob
   - browser fetches JSON
   - native audio element owns playback state
   - custom controls seek the native audio element
+  - speed menu sets the native audio element `playbackRate`

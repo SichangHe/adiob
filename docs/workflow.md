@@ -25,6 +25,14 @@ voice and publication workflow
   - `--confirm-rights` is the explicit gate that the source text may be generated and published
   - `--rough-timings` updates segment times by text length after generation
   - production-quality alignment should replace rough timings with sentence or word alignment
+- local playback
+  - `python3 scripts/serve-local.py 8000` serves existing files from disk
+  - local audio seeking requires byte-range responses
+  - the browser tries `releaseAudio.url` first when present
+  - if release audio is stale, update or remove `releaseAudio.url`
+  - if fallback audio is stale, replace the file named by the manifest `audio`
+  - `-10` and `+10` seek by seconds
+  - Speed changes browser playback rate and does not modify generated audio
 - publish release audio
   - release assets give stable public URLs and avoid making Pages the primary audio host
   - source: GitHub CLI says `gh release upload <tag> <files>...`

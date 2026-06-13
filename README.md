@@ -7,10 +7,18 @@ It assumes audio has already been generated and aligned to text. The page loads 
 ## local run
 
 ```sh
-python3 -m http.server 8000
+python3 scripts/serve-local.py 8000
 ```
 
 Open `http://localhost:8000` from this directory.
+
+Use `scripts/serve-local.py` instead of `python3 -m http.server` for local audiobook testing. It supports byte-range requests, which browsers need for seeking inside `media/sample.m4a`.
+
+The local server serves static files from disk. The page tries `releaseAudio.url` first when the manifest has one, then falls back to `audio`. If the page still plays old audio, update or remove `releaseAudio.url`; for local fallback audio, regenerate or replace the file named by `audio` in `data/small-walk.json`:
+
+```sh
+uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest data/small-walk.json --out media/sample.m4a --confirm-rights --rough-timings
+```
 
 ## voice and publication workflow
 
@@ -32,6 +40,8 @@ The release script requires `origin` to match `OWNER/REPO` before a real upload.
 
 The Pages UI tries `releaseAudio.url` first when present and falls back to `audio` if the release asset cannot be loaded. The GitHub Pages workflow is in `.github/workflows/pages.yml`.
 
+The `-10` and `+10` buttons seek by seconds. Use the Speed menu to change playback tempo in the browser without regenerating audio.
+
 ## layout
 
 ```text
@@ -47,6 +57,7 @@ The Pages UI tries `releaseAudio.url` first when present and falls back to `audi
 |-- scripts
 |   |-- generate-kokoro-audio.py
 |   |-- publish-release-audio.sh
+|   |-- serve-local.py
 |   `-- set-release-audio-url.py
 |-- src
 |   |-- app.js

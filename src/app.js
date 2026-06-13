@@ -6,6 +6,7 @@ const duration = document.querySelector("#duration");
 const forward = document.querySelector("#forward");
 const license = document.querySelector("#book-license");
 const play = document.querySelector("#play");
+const playbackRate = document.querySelector("#playback-rate");
 const releaseAudio = document.querySelector("#release-audio");
 const scrub = document.querySelector("#scrub");
 const segments = document.querySelector("#segments");
@@ -14,6 +15,7 @@ const author = document.querySelector("#book-author");
 
 let book = null;
 let activeId = "";
+let pendingSeekSec = null;
 
 async function loadJson(path) {
   const response = await fetch(path);
@@ -54,6 +56,7 @@ function renderBook(nextBook) {
   cover.alt = `${book.title} cover`;
   audio.dataset.releaseFallbackUsed = "0";
   audio.src = book.releaseAudio?.url || book.audio;
+  setPlaybackRate();
   renderReleaseAudio(book.releaseAudio);
   scrub.max = String(book.durationSec);
   duration.textContent = fmtTime(book.durationSec);
@@ -117,13 +120,37 @@ function updateProgress(valueSec) {
   active?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
+function maxPlaybackSec() {
+  if (Number.isFinite(audio.duration)) {
+    return audio.duration;
+  }
+  if (Number.isFinite(book?.durationSec)) {
+    return book.durationSec;
+  }
+  return 0;
+}
+
+function seekTo(valueSec) {
+  const targetSec = Math.min(Math.max(0, valueSec), maxPlaybackSec());
+  if (audio.readyState === 0) {
+    pendingSeekSec = targetSec;
+  } else {
+    audio.currentTime = targetSec;
+  }
+  updateProgress(targetSec);
+}
+
 function seekBy(deltaSec) {
-  audio.currentTime = Math.min(Math.max(0, audio.currentTime + deltaSec), book?.durationSec ?? 0);
-  updateProgress(audio.currentTime);
+  const currentSec = audio.readyState === 0 ? Number(scrub.value) : audio.currentTime;
+  seekTo(currentSec + deltaSec);
 }
 
 function setPlaying(isPlaying) {
   play.textContent = isPlaying ? "Pause" : "Play";
+}
+
+function setPlaybackRate() {
+  audio.playbackRate = Number(playbackRate.value);
 }
 
 back.addEventListener("click", () => seekBy(-10));
@@ -136,13 +163,17 @@ play.addEventListener("click", () => {
   audio.pause();
 });
 scrub.addEventListener("input", () => {
-  audio.currentTime = Number(scrub.value);
-  updateProgress(audio.currentTime);
+  seekTo(Number(scrub.value));
 });
+playbackRate.addEventListener("change", setPlaybackRate);
 audio.addEventListener("loadedmetadata", () => {
-  const maxSec = Number.isFinite(audio.duration) ? audio.duration : book?.durationSec;
+  const maxSec = maxPlaybackSec();
   scrub.max = String(maxSec);
   duration.textContent = fmtTime(maxSec);
+  if (pendingSeekSec !== null) {
+    audio.currentTime = pendingSeekSec;
+    pendingSeekSec = null;
+  }
 });
 audio.addEventListener("error", () => {
   if (!book?.releaseAudio?.url || !book.audio || audio.dataset.releaseFallbackUsed === "1") {
