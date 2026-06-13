@@ -1,0 +1,25 @@
+local owned-book demo
+- purpose
+  - exercise the reader with text from a locally owned or locally accessed book
+  - keep extracted text, derived manifest text, cover, and generated audio out of the public repo
+- rights boundary
+  - source text must live under ignored `owned-text/`
+  - generated demo assets must live under ignored `local/`
+  - local manifests set `localOnly` to `true`
+  - local manifests must not contain `releaseAudio`
+  - the public catalog in `data/books.json` stays limited to distributable books
+  - release tooling refuses `localOnly` manifests and files under private `local/` or `owned-text/` roots
+- current local book
+  - build ignored manifest and cover
+    - `python3 scripts/build-local-owned-demo.py --confirm-local-owned-use`
+  - generate ignored audio and rough timings
+    - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/the-contrarian/manifest.json --out local/owned-books/the-contrarian/demo.m4a --confirm-local-owned-use --rough-timings`
+  - serve local reader
+    - `python3 scripts/serve-local.py 8000`
+  - open local demo
+    - `http://127.0.0.1:8000/?manifest=local/owned-books/the-contrarian/manifest.json`
+- other local books
+  - write extracted text to `owned-text/<book>.txt`
+  - run `scripts/build-local-owned-demo.py` with a different `--text`, `--out-dir`, `--id`, `--title`, and `--author`
+  - generate audio with `--confirm-local-owned-use`
+  - keep the result out of release upload and Pages publishing

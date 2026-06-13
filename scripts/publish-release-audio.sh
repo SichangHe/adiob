@@ -19,6 +19,7 @@ dry_run=0
 confirm_rights=0
 clobber=0
 repo=""
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 while (($#)); do
   case "$1" in
     --dry-run)
@@ -72,6 +73,61 @@ for file in "${files[@]}"; do
   asset_name="$(basename "$file")"
   [[ "$asset_name" =~ ^[A-Za-z0-9._-]+$ ]] || die "asset name must be URL-safe: $asset_name"
 done
+
+python3 - "$repo_root" "$manifest" "${files[@]}" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve(strict=False)
+private_roots = (root / "local", root / "owned-text")
+manifest_path = Path(sys.argv[2])
+audio_files = [Path(path) for path in sys.argv[3:]]
+
+
+def under(path: Path, parent: Path) -> bool:
+    return path.is_relative_to(parent)
+
+
+def die(message: str) -> None:
+    raise SystemExit(f"error: {message}")
+
+
+def lexical(path: Path, base: Path | None = None) -> Path:
+    if path.is_absolute():
+        return Path(os.path.abspath(path))
+    return Path(os.path.abspath((base or Path.cwd()) / path))
+
+
+def private_root(path: Path) -> str | None:
+    lexical_path = lexical(path)
+    resolved_path = lexical_path.resolve(strict=False)
+    for private in private_roots:
+        if under(lexical_path, private) or under(resolved_path, private):
+            return private.relative_to(root).as_posix()
+    return None
+
+
+private = private_root(manifest_path)
+if private:
+    die(f"refusing to publish a manifest under ignored `{private}/`")
+manifest = json.loads(lexical(manifest_path).read_text(encoding="utf-8"))
+if manifest.get("localOnly") is True:
+    die("refusing to publish a `localOnly` manifest")
+audio = manifest.get("audio")
+if isinstance(audio, str):
+    audio_path = Path(audio)
+    private = private_root(audio_path if audio_path.is_absolute() else root / audio_path)
+    if private:
+        die(f"refusing to publish a manifest whose `audio` is under ignored `{private}/`")
+for audio_file in audio_files:
+    private = private_root(audio_file)
+    if private:
+        die(f"refusing to upload a file from ignored `{private}/`")
+PY
 
 remote_repo_from_url() {
   local url="$1"

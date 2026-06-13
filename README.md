@@ -20,6 +20,18 @@ The local server serves static files from disk. The page tries `releaseAudio.url
 uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest data/small-walk.json --out media/sample.m4a --confirm-rights --rough-timings
 ```
 
+Ignored local manifests can be opened without adding them to the public catalog:
+
+```sh
+python3 scripts/build-local-owned-demo.py --confirm-local-owned-use
+uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/the-contrarian/manifest.json --out local/owned-books/the-contrarian/demo.m4a --confirm-local-owned-use --rough-timings
+python3 scripts/serve-local.py 8000
+```
+
+Open `http://127.0.0.1:8000/?manifest=local/owned-books/the-contrarian/manifest.json`.
+
+Local owned-book manifests and audio stay under ignored `local/`. They are not release assets, not GitHub Pages content, and not entries in `data/books.json`. See `docs/local-owned-demo.md`.
+
 ## voice and publication workflow
 
 The preferred local voice path is Kokoro-82M via the `kokoro` Python package. The model card describes Kokoro as an "open-weight TTS model with 82 million parameters" and lists `apache-2.0` licensing. ElevenLabs can be a high-quality commercial API alternative, but it is not the open-source/local workflow in this prototype.
@@ -29,6 +41,10 @@ Generate audio only from public-domain, permissively licensed, or user-provided 
 ```sh
 uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest data/small-walk.json --out media/sample.m4a --confirm-rights --rough-timings
 ```
+
+For ignored owned-book demos that are for local use only, use `--confirm-local-owned-use` and keep the manifest and audio under `local/`.
+
+The release-upload helpers refuse `localOnly` manifests and files under private `local/` or `owned-text/` roots.
 
 Publish generated audio as a GitHub release asset and write the release URL into the manifest:
 

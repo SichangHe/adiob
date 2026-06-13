@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -35,6 +36,11 @@ def parse_args() -> argparse.Namespace:
         help="Confirm the source text may be generated and published.",
     )
     parser.add_argument(
+        "--confirm-local-owned-use",
+        action="store_true",
+        help="Confirm local-only generation from owned-access text.",
+    )
+    parser.add_argument(
         "--rough-timings",
         action="store_true",
         help="Update manifest timings by text length after generation.",
@@ -44,6 +50,63 @@ def parse_args() -> argparse.Namespace:
 
 def load_manifest(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def root_path(path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return repo_root() / path
+
+
+def lexical_path(path: Path) -> Path:
+    return Path(os.path.abspath(root_path(path)))
+
+
+def resolved_under(path: Path, parent: Path) -> bool:
+    return (
+        root_path(path)
+        .resolve(strict=False)
+        .is_relative_to(parent.resolve(strict=False))
+    )
+
+
+def lexical_under(path: Path, parent: Path) -> bool:
+    return lexical_path(path).is_relative_to(lexical_path(parent))
+
+
+def strictly_under(path: Path, parent: Path) -> bool:
+    return lexical_under(path, parent) and resolved_under(path, parent)
+
+
+def maybe_under(path: Path, parent: Path) -> bool:
+    return lexical_under(path, parent) or resolved_under(path, parent)
+
+
+def require_local_owned_use(
+    manifest_path: Path, manifest: dict[str, Any], out: Path
+) -> None:
+    root = repo_root()
+    local_root = root / "local"
+    if not strictly_under(manifest_path, local_root):
+        raise SystemExit("local-owned manifests must be under ignored `local/`")
+    if out.is_absolute() or not strictly_under(out, local_root):
+        raise SystemExit(
+            "local-owned audio output must be a relative path under ignored `local/`"
+        )
+    if manifest.get("localOnly") is not True:
+        raise SystemExit("local-owned manifests must set `localOnly` to true")
+    if manifest.get("releaseAudio"):
+        raise SystemExit("local-owned manifests must not contain `releaseAudio`")
+
+
+def manifest_requires_local_mode(manifest_path: Path, manifest: dict[str, Any]) -> bool:
+    return manifest.get("localOnly") is True or maybe_under(
+        manifest_path, repo_root() / "local"
+    )
 
 
 def segment_text(manifest: dict[str, Any]) -> str:
@@ -164,27 +227,38 @@ def apply_rough_timings(
 
 def main() -> None:
     args = parse_args()
-    if not args.confirm_rights:
+    if args.confirm_rights and args.confirm_local_owned_use:
+        raise SystemExit("choose one rights confirmation mode")
+    if not args.confirm_rights and not args.confirm_local_owned_use:
         raise SystemExit(
-            "pass --confirm-rights only for public-domain, permissively licensed, or user-provided text"
+            "pass --confirm-rights for publishable text or "
+            "--confirm-local-owned-use for ignored local owned-book demos"
         )
-    manifest = load_manifest(args.manifest)
+    manifest_path = root_path(args.manifest)
+    manifest = load_manifest(manifest_path)
+    if args.confirm_rights and manifest_requires_local_mode(manifest_path, manifest):
+        raise SystemExit(
+            "local-owned manifests require --confirm-local-owned-use and ignored `local/` output"
+        )
     text = segment_text(manifest)
-    out = args.out or Path(str(manifest.get("audio", "")))
-    if not str(out):
+    manifest_out = args.out or Path(str(manifest.get("audio", "")))
+    if not str(manifest_out):
         raise SystemExit("provide --out or set `audio` in the manifest")
-    require_tools(out)
+    if args.confirm_local_owned_use:
+        require_local_owned_use(manifest_path, manifest, manifest_out)
+    audio_out = root_path(manifest_out)
+    require_tools(audio_out)
     with tempfile.TemporaryDirectory(prefix="adiob-kokoro-") as tmp:
         wav = Path(tmp) / "audio.wav"
         write_kokoro_wav(text, wav, args.lang, args.voice)
-        encode_audio(wav, out)
-    duration_sec = probe_duration_sec(out)
+        encode_audio(wav, audio_out)
+    duration_sec = probe_duration_sec(audio_out)
     if args.rough_timings:
-        apply_rough_timings(manifest, duration_sec, out, args.voice, args.lang)
-        args.manifest.write_text(
+        apply_rough_timings(manifest, duration_sec, manifest_out, args.voice, args.lang)
+        manifest_path.write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
         )
-    print(f"wrote {out} ({duration_sec:.3f}s)")
+    print(f"wrote {audio_out} ({duration_sec:.3f}s)")
 
 
 if __name__ == "__main__":

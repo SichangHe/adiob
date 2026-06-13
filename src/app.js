@@ -25,7 +25,34 @@ async function loadJson(path) {
   return { value: await response.json() };
 }
 
+function requestedManifest() {
+  const manifest = new URLSearchParams(window.location.search).get("manifest");
+  if (!manifest) {
+    return { value: null };
+  }
+  const parts = manifest.split("/");
+  if (
+    !manifest.startsWith("local/") ||
+    manifest.includes(":") ||
+    manifest.includes("?") ||
+    manifest.includes("#") ||
+    manifest.includes("\\") ||
+    parts.some((part) => part === "" || part === "." || part === "..") ||
+    !manifest.endsWith(".json")
+  ) {
+    return { error: "manifest must be a relative local JSON path" };
+  }
+  return { value: manifest };
+}
+
 async function loadBook() {
+  const requested = requestedManifest();
+  if (requested.error) {
+    return requested;
+  }
+  if (requested.value) {
+    return loadJson(requested.value);
+  }
   const indexResult = await loadJson("data/books.json");
   if (indexResult.error) {
     return indexResult;
