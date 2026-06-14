@@ -40,13 +40,25 @@
             </select>
           </label>
           <p id="book-license" class="license"></p>
-          <p class="notice">Takedown requests and rights concerns can be sent to the repository owner. Access may be removed while a concern is reviewed.</p>
         </aside>
-        <article id="segments" class="segments" aria-label="Transcript"></article>
-        <div class="timeline">
-          <span id="current-time">0:00</span>
-          <input id="scrub" type="range" min="0" max="0" step="0.001" value="0" aria-label="Timeline" />
-          <span id="duration">0:00</span>
+        <div class="content">
+          <div id="page-tools" class="page-tools" hidden>
+            <label class="page-picker">
+              <span>Page</span>
+              <select id="page-select" aria-label="Page selection"></select>
+            </label>
+            <div class="page-nav" aria-label="Page controls">
+              <button id="prev-page" type="button">Previous</button>
+              <span id="page-status"></span>
+              <button id="next-page" type="button">Next</button>
+            </div>
+          </div>
+          <article id="segments" class="segments" aria-label="Transcript"></article>
+          <div class="timeline">
+            <span id="current-time">0:00</span>
+            <input id="scrub" type="range" min="0" max="0" step="0.001" value="0" aria-label="Timeline" />
+            <span id="duration">0:00</span>
+          </div>
         </div>
       </section>
     </main>

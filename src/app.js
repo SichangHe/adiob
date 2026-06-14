@@ -15,14 +15,27 @@ const author = document.querySelector("#book-author");
 const bookSelect = document.querySelector("#book-select");
 const bookPicker = document.querySelector("#book-picker");
 const buildTag = document.querySelector("#build-tag");
+const pageTools = document.querySelector("#page-tools");
+const pageSelect = document.querySelector("#page-select");
+const pageStatus = document.querySelector("#page-status");
+const prevPage = document.querySelector("#prev-page");
+const nextPage = document.querySelector("#next-page");
 
 let book = null;
 let catalog = null;
 let activeId = "";
+let activePage = null;
+let activePageIndex = 0;
 let pendingSeekSec = null;
 let currentManifest = "";
 let restoringProgress = false;
 let renderSeq = 0;
+let pageSeq = 0;
+let pageLoad = null;
+let speechUtterance = null;
+let speechProgressTimer = null;
+let speechPlaying = false;
+let speechSeq = 0;
 
 function renderBuildTag() {
   const build = buildTag?.dataset.build;
@@ -130,34 +143,96 @@ function normalizeSegments(rawSegments, startIndex = 0) {
   return { value: nextSegments };
 }
 
-async function loadSegments(nextBook, manifestPath) {
+function normalizePage(page, index) {
+  if (!page || typeof page !== "object") {
+    return { error: "manifest page is not an object" };
+  }
+  const startSec = Number(page.startSec ?? 0);
+  const endSec = Number(page.endSec ?? startSec);
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec < startSec) {
+    return { error: "manifest page has invalid timing" };
+  }
+  return {
+    value: {
+      id: String(page.id ?? `p${String(index + 1).padStart(3, "0")}`),
+      title: String(page.title ?? `Page ${index + 1}`),
+      path: typeof page.path === "string" ? page.path : "",
+      startSec,
+      endSec,
+      count: Number(page.count ?? 0),
+      segments: Array.isArray(page.segments) ? page.segments : null,
+    },
+  };
+}
+
+function normalizePages(nextBook) {
+  if (Array.isArray(nextBook.pages) && nextBook.pages.length) {
+    const pages = [];
+    for (const [index, page] of nextBook.pages.entries()) {
+      const result = normalizePage(page, index);
+      if (result.error) {
+        return result;
+      }
+      pages.push(result.value);
+    }
+    return { value: pages };
+  }
+  if (Array.isArray(nextBook.segmentChunks) && nextBook.segmentChunks.length) {
+    const pages = [];
+    for (const [index, chunk] of nextBook.segmentChunks.entries()) {
+      const result = normalizePage(
+        {
+          ...chunk,
+          title: chunk.title ?? `Page ${index + 1}`,
+        },
+        index,
+      );
+      if (result.error) {
+        return result;
+      }
+      pages.push(result.value);
+    }
+    return { value: pages };
+  }
   if (Array.isArray(nextBook.segments)) {
-    return normalizeSegments(nextBook.segments);
-  }
-  const chunks = nextBook.segmentChunks;
-  if (!Array.isArray(chunks) || !chunks.length) {
-    return { error: "manifest has no segment data" };
-  }
-  const nextSegments = [];
-  for (const chunk of chunks) {
-    const path = chunk?.path;
-    if (typeof path !== "string" || !path) {
-      return { error: "segment chunk is missing a path" };
-    }
-    const result = await loadJson(assetPath(path, manifestPath));
-    if (result.error) {
-      return result;
-    }
-    const rawSegments = Array.isArray(result.value)
-      ? result.value
-      : result.value?.segments;
-    const normalized = normalizeSegments(rawSegments, nextSegments.length);
+    const normalized = normalizeSegments(nextBook.segments);
     if (normalized.error) {
       return normalized;
     }
-    nextSegments.push(...normalized.value);
+    const first = normalized.value[0];
+    const last = normalized.value.at(-1);
+    return {
+      value: [
+        {
+          id: "p001",
+          title: "Page 1",
+          path: "",
+          startSec: first.startSec,
+          endSec: last.endSec,
+          count: normalized.value.length,
+          segments: normalized.value,
+        },
+      ],
+    };
   }
-  return { value: nextSegments };
+  return { error: "manifest has no page data" };
+}
+
+async function loadPageSegments(page, manifestPath) {
+  if (Array.isArray(page.segments)) {
+    return normalizeSegments(page.segments);
+  }
+  if (!page.path) {
+    return { error: "page is missing a segment path" };
+  }
+  const result = await loadJson(assetPath(page.path, manifestPath));
+  if (result.error) {
+    return result;
+  }
+  const rawSegments = Array.isArray(result.value)
+    ? result.value
+    : result.value?.segments;
+  return normalizeSegments(rawSegments);
 }
 
 async function loadBook() {
@@ -200,6 +275,8 @@ function renderBookSelect(books) {
 
 function renderError(message) {
   title.textContent = "adiob";
+  license.hidden = true;
+  pageTools.hidden = true;
   segments.replaceChildren();
   const error = document.createElement("p");
   error.className = "load-error";
@@ -239,34 +316,50 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
   if (manifestPath !== currentManifest) {
     return;
   }
+  stopSpeech(false);
+  audio.pause();
+  setPlaying(false);
   const renderId = ++renderSeq;
-  const segmentResult = await loadSegments(nextBook, manifestPath);
+  pageSeq += 1;
+  pageLoad = null;
+  const pageResult = normalizePages(nextBook);
   if (renderId !== renderSeq || manifestPath !== currentManifest) {
     return;
   }
-  if (segmentResult.error) {
-    renderError(segmentResult.error);
+  if (pageResult.error) {
+    renderError(pageResult.error);
     return;
   }
-  book = { ...nextBook, segments: segmentResult.value };
+  book = { ...nextBook, pages: pageResult.value };
+  activePage = null;
+  activePageIndex = 0;
   const restoredSec = Math.min(savedProgressSec(book), Number(book.durationSec) || 0);
   restoringProgress = restoredSec > 0;
   pendingSeekSec = restoredSec > 0 ? restoredSec : null;
   document.title = `${book.title} | adiob`;
   title.textContent = book.title;
   author.textContent = book.author;
-  license.textContent = book.license;
+  const bookLicense = String(book.license ?? "").trim();
+  license.textContent = bookLicense;
+  license.hidden = !bookLicense;
   cover.src = assetPath(book.cover, manifestPath);
   cover.alt = `${book.title} cover`;
   audio.dataset.releaseFallbackUsed = "0";
-  audio.src = assetPath(book.releaseAudio?.url || book.audio, manifestPath);
+  if (hasAudio()) {
+    audio.src = assetPath(book.releaseAudio?.url || book.audio, manifestPath);
+    audio.load();
+  } else {
+    audio.removeAttribute("src");
+    audio.load();
+  }
   setPlaybackRate();
   renderReleaseAudio(book.releaseAudio, manifestPath);
   scrub.max = String(book.durationSec);
   duration.textContent = fmtTime(book.durationSec);
-  segments.replaceChildren(...book.segments.map(renderSegment));
   activeId = "";
-  updateProgress(restoredSec);
+  renderPageSelect();
+  setAudioControls();
+  await switchPage(pageIndexAt(restoredSec), { updateSec: restoredSec });
 }
 
 function renderReleaseAudio(track, manifestPath) {
@@ -278,6 +371,206 @@ function renderReleaseAudio(track, manifestPath) {
   releaseAudio.hidden = false;
   releaseAudio.href = assetPath(track.url, manifestPath);
   releaseAudio.textContent = track.asset ? `Release audio: ${track.asset}` : "Release audio";
+}
+
+function hasAudio() {
+  return Boolean(book && (book.releaseAudio?.url || book.audio));
+}
+
+function hasSpeech() {
+  return Boolean(book && !hasAudio() && "speechSynthesis" in window);
+}
+
+function canPlay() {
+  return hasAudio() || hasSpeech();
+}
+
+function setAudioControls() {
+  const disabled = !canPlay();
+  play.disabled = disabled;
+  if (disabled) {
+    setPlaying(false);
+  }
+}
+
+function stopSpeech(updateButton = true) {
+  speechSeq += 1;
+  speechPlaying = false;
+  if (speechProgressTimer !== null) {
+    window.clearInterval(speechProgressTimer);
+    speechProgressTimer = null;
+  }
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+  speechUtterance = null;
+  if (updateButton) {
+    setPlaying(false);
+  }
+}
+
+function runSpeechProgress(segment) {
+  const startMs = window.performance.now();
+  const startSec = segment.startSec;
+  const durationSec = Math.max(0.25, segment.endSec - segment.startSec);
+  speechProgressTimer = window.setInterval(() => {
+    const elapsedSec = (window.performance.now() - startMs) / 1000;
+    const fraction = Math.min(1, elapsedSec / durationSec);
+    const valueSec = startSec + durationSec * fraction;
+    updateProgress(valueSec);
+    saveProgressSec(valueSec);
+  }, 250);
+}
+
+async function playSpeechFrom(valueSec) {
+  if (!hasSpeech()) {
+    return;
+  }
+  stopSpeech(false);
+  const nextSpeechSeq = speechSeq;
+  const switched = await ensurePageForTime(valueSec);
+  if (!switched || nextSpeechSeq !== speechSeq || !hasSpeech()) {
+    return;
+  }
+  const segment = segmentAt(valueSec) ?? activePage?.segments?.[0];
+  if (!segment) {
+    setPlaying(false);
+    return;
+  }
+  const pageIndex = activePageIndex;
+  const segmentIndex = activePage.segments.findIndex((item) => item.id === segment.id);
+  speechPlaying = true;
+  setPlaying(true);
+  updateProgress(segment.startSec);
+  saveProgressSec(segment.startSec, true);
+  speechUtterance = new SpeechSynthesisUtterance(segment.text);
+  speechUtterance.rate = Number(playbackRate.value);
+  speechUtterance.onend = () => {
+    if (!speechPlaying || nextSpeechSeq !== speechSeq) {
+      return;
+    }
+    void playNextSpeechSegment(pageIndex, segmentIndex, nextSpeechSeq);
+  };
+  speechUtterance.onerror = () => {
+    if (nextSpeechSeq === speechSeq) {
+      stopSpeech(true);
+    }
+  };
+  runSpeechProgress(segment);
+  window.speechSynthesis.speak(speechUtterance);
+}
+
+async function playNextSpeechSegment(pageIndex, segmentIndex, currentSpeechSeq) {
+  if (currentSpeechSeq !== speechSeq) {
+    return;
+  }
+  if (!book?.pages?.[pageIndex] || segmentIndex < 0) {
+    stopSpeech(true);
+    return;
+  }
+  if (pageIndex !== activePageIndex) {
+    const switched = await switchPage(pageIndex, { updateSec: book.pages[pageIndex].startSec });
+    if (!switched || currentSpeechSeq !== speechSeq) {
+      return;
+    }
+  }
+  const pageSegments = activePage?.segments ?? [];
+  if (segmentIndex < pageSegments.length - 1) {
+    await playSpeechFrom(pageSegments[segmentIndex + 1].startSec);
+    return;
+  }
+  if (pageIndex < book.pages.length - 1) {
+    const nextIndex = pageIndex + 1;
+    const switched = await switchPage(nextIndex, { updateSec: book.pages[nextIndex].startSec });
+    if (!switched || currentSpeechSeq !== speechSeq) {
+      return;
+    }
+    await playSpeechFrom(book.pages[nextIndex].startSec);
+    return;
+  }
+  stopSpeech(true);
+}
+
+function renderPageSelect() {
+  const pages = book?.pages ?? [];
+  pageSelect.replaceChildren(
+    ...pages.map((page, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = `${index + 1}. ${page.title}`;
+      return option;
+    }),
+  );
+  pageTools.hidden = pages.length <= 1;
+}
+
+function updatePageControls() {
+  const pages = book?.pages ?? [];
+  pageSelect.value = String(activePageIndex);
+  pageStatus.textContent = `${activePageIndex + 1} / ${pages.length}`;
+  prevPage.disabled = activePageIndex <= 0;
+  nextPage.disabled = activePageIndex >= pages.length - 1;
+}
+
+function pageIndexAt(valueSec) {
+  const pages = book?.pages ?? [];
+  if (!pages.length) {
+    return 0;
+  }
+  const index = pages.findIndex(
+    (page) => valueSec >= page.startSec && valueSec < page.endSec,
+  );
+  if (index >= 0) {
+    return index;
+  }
+  return valueSec >= pages.at(-1).endSec ? pages.length - 1 : 0;
+}
+
+async function switchPage(index, options = {}) {
+  if (!book?.pages?.length) {
+    return false;
+  }
+  const pages = book.pages;
+  const manifestPath = currentManifest;
+  const nextIndex = Math.min(Math.max(0, index), pages.length - 1);
+  if (pageLoad?.index === nextIndex && pageLoad.manifestPath === manifestPath) {
+    return pageLoad.promise;
+  }
+  const page = pages[nextIndex];
+  const nextSeq = ++pageSeq;
+  const promise = (async () => {
+    const result = await loadPageSegments(page, manifestPath);
+    if (nextSeq !== pageSeq || manifestPath !== currentManifest || pages !== book?.pages) {
+      return false;
+    }
+    if (result.error) {
+      renderError(result.error);
+      return false;
+    }
+    activePageIndex = nextIndex;
+    activePage = { ...page, segments: result.value };
+    segments.replaceChildren(...activePage.segments.map(renderSegment));
+    activeId = "";
+    updatePageControls();
+    updateProgress(options.updateSec ?? Math.max(page.startSec, Number(scrub.value) || 0));
+    return true;
+  })();
+  pageLoad = { index: nextIndex, manifestPath, promise };
+  try {
+    return await promise;
+  } finally {
+    if (pageLoad?.promise === promise) {
+      pageLoad = null;
+    }
+  }
+}
+
+async function ensurePageForTime(valueSec) {
+  const nextIndex = pageIndexAt(valueSec);
+  if (nextIndex !== activePageIndex) {
+    return switchPage(nextIndex, { updateSec: valueSec });
+  }
+  return true;
 }
 
 function renderSegment(segment, index) {
@@ -293,7 +586,13 @@ function renderSegment(segment, index) {
   button.append(text);
   button.addEventListener("click", () => {
     seekTo(segment.startSec);
-    void audio.play();
+    if (hasAudio()) {
+      void audio.play();
+      return;
+    }
+    if (hasSpeech()) {
+      void playSpeechFrom(segment.startSec);
+    }
   });
   return button;
 }
@@ -305,10 +604,14 @@ function fmtTime(valueSec) {
 }
 
 function segmentAt(valueSec) {
-  if (!book) {
+  if (!activePage?.segments?.length) {
     return null;
   }
-  return book.segments.find((segment) => valueSec >= segment.startSec && valueSec < segment.endSec) ?? book.segments.at(-1);
+  return (
+    activePage.segments.find(
+      (segment) => valueSec >= segment.startSec && valueSec < segment.endSec,
+    ) ?? activePage.segments.at(-1)
+  );
 }
 
 function updateProgress(valueSec) {
@@ -325,11 +628,13 @@ function updateProgress(valueSec) {
     button.toggleAttribute("aria-current", isActive);
   }
   const active = segments.querySelector(".segment.active");
-  active?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  if (segments.scrollHeight > segments.clientHeight + 1) {
+    active?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
 }
 
 function maxPlaybackSec() {
-  if (Number.isFinite(audio.duration) && audio.duration > 0) {
+  if (hasAudio() && Number.isFinite(audio.duration) && audio.duration > 0) {
     return audio.duration;
   }
   if (Number.isFinite(book?.durationSec)) {
@@ -341,8 +646,13 @@ function maxPlaybackSec() {
 function seekTo(valueSec) {
   const targetSec = Math.min(Math.max(0, valueSec), maxPlaybackSec());
   const isRestoring = restoringProgress;
+  const restartSpeech = !hasAudio() && speechPlaying;
+  if (restartSpeech) {
+    stopSpeech(false);
+  }
   pendingSeekSec = targetSec;
-  if (audio.readyState >= 1) {
+  void ensurePageForTime(targetSec);
+  if (hasAudio() && audio.readyState >= 1) {
     try {
       audio.currentTime = targetSec;
       if (!isRestoring || targetSec <= 0) {
@@ -352,16 +662,22 @@ function seekTo(valueSec) {
     } catch {
       pendingSeekSec = targetSec;
     }
+  } else if (!hasAudio()) {
+    pendingSeekSec = null;
+    restoringProgress = false;
   }
   updateProgress(targetSec);
   saveProgressSec(targetSec, true);
+  if (restartSpeech) {
+    void playSpeechFrom(targetSec);
+  }
 }
 
 function seekBy(deltaSec) {
   const scrubSec = Number(scrub.value);
   const currentSec =
     pendingSeekSec ??
-    (audio.readyState >= 1 && Number.isFinite(audio.currentTime)
+    (hasAudio() && audio.readyState >= 1 && Number.isFinite(audio.currentTime)
       ? audio.currentTime
       : Number.isFinite(scrubSec)
         ? scrubSec
@@ -375,11 +691,25 @@ function setPlaying(isPlaying) {
 
 function setPlaybackRate() {
   audio.playbackRate = Number(playbackRate.value);
+  if (speechPlaying) {
+    void playSpeechFrom(Number(scrub.value) || activePage?.startSec || 0);
+  }
 }
 
 back.addEventListener("click", () => seekBy(-10));
 forward.addEventListener("click", () => seekBy(10));
 play.addEventListener("click", () => {
+  if (!canPlay()) {
+    return;
+  }
+  if (hasSpeech()) {
+    if (speechPlaying) {
+      stopSpeech(true);
+      return;
+    }
+    void playSpeechFrom(Number(scrub.value) || activePage?.startSec || 0);
+    return;
+  }
   if (audio.paused) {
     audio.play();
     return;
@@ -393,6 +723,42 @@ scrub.addEventListener("change", () => {
   seekTo(Number(scrub.value));
 });
 playbackRate.addEventListener("change", setPlaybackRate);
+pageSelect.addEventListener("change", async () => {
+  const index = Number(pageSelect.value);
+  if (!Number.isFinite(index) || !book?.pages?.[index]) {
+    return;
+  }
+  const nextBook = book;
+  const page = nextBook.pages[index];
+  const switched = await switchPage(index, { updateSec: page.startSec });
+  if (switched && book === nextBook) {
+    seekTo(page.startSec);
+  }
+});
+prevPage.addEventListener("click", async () => {
+  if (!book?.pages?.length) {
+    return;
+  }
+  const nextBook = book;
+  const index = Math.max(0, activePageIndex - 1);
+  const page = nextBook.pages[index];
+  const switched = await switchPage(index, { updateSec: page.startSec });
+  if (switched && book === nextBook) {
+    seekTo(page.startSec);
+  }
+});
+nextPage.addEventListener("click", async () => {
+  if (!book?.pages?.length) {
+    return;
+  }
+  const nextBook = book;
+  const index = Math.min(nextBook.pages.length - 1, activePageIndex + 1);
+  const page = nextBook.pages[index];
+  const switched = await switchPage(index, { updateSec: page.startSec });
+  if (switched && book === nextBook) {
+    seekTo(page.startSec);
+  }
+});
 bookSelect.addEventListener("change", async () => {
   if (!catalog) {
     return;
@@ -436,6 +802,7 @@ audio.addEventListener("error", () => {
   audio.load();
 });
 audio.addEventListener("timeupdate", () => {
+  void ensurePageForTime(audio.currentTime);
   updateProgress(audio.currentTime);
   if (restoringProgress && audio.currentTime > 0) {
     restoringProgress = false;
@@ -445,7 +812,23 @@ audio.addEventListener("timeupdate", () => {
 });
 audio.addEventListener("play", () => setPlaying(true));
 audio.addEventListener("pause", () => setPlaying(false));
-audio.addEventListener("ended", () => setPlaying(false));
+audio.addEventListener("ended", async () => {
+  if (!book?.pages?.length || activePageIndex >= book.pages.length - 1) {
+    setPlaying(false);
+    return;
+  }
+  const nextBook = book;
+  const nextIndex = activePageIndex + 1;
+  const page = nextBook.pages[nextIndex];
+  const switched = await switchPage(nextIndex, { updateSec: page.startSec });
+  if (!switched || book !== nextBook) {
+    return;
+  }
+  seekTo(page.startSec);
+  if (hasAudio() && book === nextBook) {
+    void audio.play();
+  }
+});
 
 renderBuildTag();
 const result = await loadBook();
