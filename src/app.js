@@ -21,6 +21,13 @@ const pageStatus = document.querySelector("#page-status");
 const prevPage = document.querySelector("#prev-page");
 const nextPage = document.querySelector("#next-page");
 
+const RATE_STEP = 0.1;
+const MIN_RATE = 0.1;
+const MAX_RATE = 2;
+const DEFAULT_RATE = 1;
+const SEEK_STEP_SEC = 10;
+const VOLUME_STEP = 0.1;
+
 let book = null;
 let catalog = null;
 let activeId = "";
@@ -44,6 +51,27 @@ function renderBuildTag() {
   }
   const isLocal = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
   buildTag.textContent = `${isLocal ? "localhost" : "source"} ${build}`;
+}
+
+function rateValue(rate) {
+  return rate.toFixed(1);
+}
+
+function rateLabel(rate) {
+  return `${rateValue(rate).replace(/\.0$/, "")}x`;
+}
+
+function renderPlaybackRates() {
+  const options = [];
+  for (let rate = MIN_RATE; rate <= MAX_RATE + RATE_STEP / 2; rate += RATE_STEP) {
+    const value = Number(rate.toFixed(1));
+    const option = document.createElement("option");
+    option.value = rateValue(value);
+    option.textContent = rateLabel(value);
+    option.selected = value === DEFAULT_RATE;
+    options.push(option);
+  }
+  playbackRate.replaceChildren(...options);
 }
 
 async function loadJson(path) {
@@ -584,17 +612,53 @@ function renderSegment(segment, index) {
   text.className = "segment-text";
   text.textContent = segment.text;
   button.append(text);
-  button.addEventListener("click", () => {
-    seekTo(segment.startSec);
+  button.addEventListener("click", (event) => {
+    const targetSec = segmentClickSec(event, segment, text);
+    seekTo(targetSec);
     if (hasAudio()) {
       void audio.play();
       return;
     }
     if (hasSpeech()) {
-      void playSpeechFrom(segment.startSec);
+      void playSpeechFrom(targetSec);
     }
   });
   return button;
+}
+
+function caretOffsetFromPoint(x, y, root) {
+  let node = null;
+  let offset = 0;
+  if (document.caretPositionFromPoint) {
+    const position = document.caretPositionFromPoint(x, y);
+    node = position?.offsetNode ?? null;
+    offset = position?.offset ?? 0;
+  } else if (document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(x, y);
+    node = range?.startContainer ?? null;
+    offset = range?.startOffset ?? 0;
+  }
+  if (!node || !root.contains(node)) {
+    return null;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(root);
+  range.setEnd(node, offset);
+  return range.toString().length;
+}
+
+function segmentClickSec(event, segment, text) {
+  const length = text.textContent.length;
+  const durationSec = segment.endSec - segment.startSec;
+  if (length <= 0 || durationSec <= 0) {
+    return segment.startSec;
+  }
+  const offset = caretOffsetFromPoint(event.clientX, event.clientY, text);
+  if (offset === null) {
+    return segment.startSec;
+  }
+  const fraction = Math.min(1, Math.max(0, offset / length));
+  return segment.startSec + durationSec * fraction;
 }
 
 function fmtTime(valueSec) {
@@ -690,15 +754,32 @@ function setPlaying(isPlaying) {
 }
 
 function setPlaybackRate() {
-  audio.playbackRate = Number(playbackRate.value);
+  const rate = Number(playbackRate.value) || DEFAULT_RATE;
+  audio.playbackRate = rate;
   if (speechPlaying) {
     void playSpeechFrom(Number(scrub.value) || activePage?.startSec || 0);
   }
 }
 
-back.addEventListener("click", () => seekBy(-10));
-forward.addEventListener("click", () => seekBy(10));
-play.addEventListener("click", () => {
+function adjustPlaybackRate(delta) {
+  const currentRate = Number(playbackRate.value) || DEFAULT_RATE;
+  const nextRate = Math.min(
+    MAX_RATE,
+    Math.max(MIN_RATE, Number((currentRate + delta).toFixed(1))),
+  );
+  playbackRate.value = rateValue(nextRate);
+  setPlaybackRate();
+}
+
+function adjustVolume(delta) {
+  const nextVolume = Math.min(1, Math.max(0, audio.volume + delta));
+  audio.volume = Number(nextVolume.toFixed(2));
+  if (audio.volume > 0) {
+    audio.muted = false;
+  }
+}
+
+function togglePlayback() {
   if (!canPlay()) {
     return;
   }
@@ -715,6 +796,62 @@ play.addEventListener("click", () => {
     return;
   }
   audio.pause();
+}
+
+function shouldHandleKeyboard(event) {
+  if (event.altKey || event.ctrlKey || event.metaKey) {
+    return false;
+  }
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    return true;
+  }
+  return !target.closest(
+    "button, a[href], input, select, textarea, [contenteditable='true'], [role='button'], [role='link']",
+  );
+}
+
+back.addEventListener("click", () => seekBy(-SEEK_STEP_SEC));
+forward.addEventListener("click", () => seekBy(SEEK_STEP_SEC));
+play.addEventListener("click", togglePlayback);
+document.addEventListener("keydown", (event) => {
+  if (!shouldHandleKeyboard(event)) {
+    return;
+  }
+  if (event.key === " ") {
+    event.preventDefault();
+    togglePlayback();
+    return;
+  }
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    seekBy(-SEEK_STEP_SEC);
+    return;
+  }
+  if (event.key === "ArrowRight") {
+    event.preventDefault();
+    seekBy(SEEK_STEP_SEC);
+    return;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    adjustVolume(VOLUME_STEP);
+    return;
+  }
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    adjustVolume(-VOLUME_STEP);
+    return;
+  }
+  if (event.key === "<") {
+    event.preventDefault();
+    adjustPlaybackRate(-RATE_STEP);
+    return;
+  }
+  if (event.key === ">") {
+    event.preventDefault();
+    adjustPlaybackRate(RATE_STEP);
+  }
 });
 scrub.addEventListener("input", () => {
   seekTo(Number(scrub.value));
@@ -830,6 +967,7 @@ audio.addEventListener("ended", async () => {
   }
 });
 
+renderPlaybackRates();
 renderBuildTag();
 const result = await loadBook();
 if (result.error) {

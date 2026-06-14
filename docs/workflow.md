@@ -29,7 +29,8 @@ voice and publication workflow
   - `--rough-timings` updates segment times from generated segment audio duration
   - production-quality alignment can still replace generated segment timing with word alignment
 - local playback
-  - `python3 scripts/serve-local.py 8000` serves existing files from disk
+  - `python3 scripts/serve-local.py 8000 --directory .` serves repo-root files from disk
+  - `python3 scripts/serve-local.py 8000 --directory _site` serves the staged Pages build
   - local audio seeking requires byte-range responses
   - the browser tries `releaseAudio.url` first when present
   - ignored local manifests can be opened from `field-notes-819a/?manifest=local/.../manifest.json`
@@ -50,6 +51,8 @@ voice and publication workflow
   - `--rough-timings` preserves manifest segment boundaries during TTS
   - open the local demo
     - `http://127.0.0.1:8000/field-notes-819a/?manifest=local/owned-books/<book>/manifest.json`
+  - open the staged owned-book catalog
+    - `http://127.0.0.1:8000/field-notes-819a/`
   - these assets are not entries in `data/books.json` and are not release assets
   - release tooling refuses `localOnly` manifests and files under private `local/` or `owned-text/` roots
 - publish release audio

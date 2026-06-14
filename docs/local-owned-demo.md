@@ -15,9 +15,18 @@ local owned-book demo
   - generate ignored audio and rough timings
     - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/<book>/manifest.json --out local/owned-books/<book>/demo.m4a --confirm-local-owned-use --rough-timings`
   - serve local reader
-    - `python3 scripts/serve-local.py 8000`
+    - `python3 scripts/serve-local.py 8000 --directory .`
   - open local demo
     - `http://127.0.0.1:8000/field-notes-819a/?manifest=local/owned-books/<book>/manifest.json`
+- staged Pages build
+  - serve the same file tree GitHub Pages deploys
+    - `python3 scripts/serve-local.py 8000 --directory _site`
+  - open the staged owned-book catalog
+    - `http://127.0.0.1:8000/field-notes-819a/`
+  - if `_site` is missing or stale, rebuild it from the private artifact checkout
+    - `rm -rf _site && mkdir _site && cp -R index.html field-notes-819a ASSET-LICENSE.md LICENSE data media src _site/ && python3 scripts/stage-private-book-artifacts.py --private-root ../adiob-private-artifacts --site-root _site --reader-path field-notes-819a`
+  - blocker
+    - `_site` cannot show owned-book entries without a readable private artifact checkout at `../adiob-private-artifacts`
 - other local books
   - extract local file text
     - `python3 scripts/extract-owned-book-text.py --source <book-file.pdf> --out owned-text/<book>.txt --confirm-local-owned-use`
