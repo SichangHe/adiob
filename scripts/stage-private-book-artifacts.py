@@ -13,6 +13,7 @@ from typing import Any
 
 
 DEFAULT_ARTIFACT_SUBDIR = "archive-cache-a17"
+DEFAULT_SEGMENT_CHUNK_SIZE = 64
 PUBLIC_BOOKS = {
     "the-elements-of-style": {
         "sourceFile": "The Elements of Style, William Strunk, Jr..pdf",
@@ -37,6 +38,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--site-root", required=True, type=Path)
     parser.add_argument("--reader-path", required=True)
     parser.add_argument("--artifact-subdir", default=DEFAULT_ARTIFACT_SUBDIR)
+    parser.add_argument(
+        "--segment-chunk-size", type=int, default=DEFAULT_SEGMENT_CHUNK_SIZE
+    )
     return parser.parse_args()
 
 
@@ -68,7 +72,9 @@ def expected_generated_path(book_id: str, name: str) -> str:
     return f"generated/{book_id}/{name}"
 
 
-def require_generated_path(book_id: str, generated: dict[str, Any], key: str, name: str) -> Path:
+def require_generated_path(
+    book_id: str, generated: dict[str, Any], key: str, name: str
+) -> Path:
     expected = expected_generated_path(book_id, name)
     actual = generated.get(key)
     if actual != expected:
@@ -85,6 +91,37 @@ def copy_file(source: Path, target: Path) -> None:
     shutil.copyfile(source, target)
 
 
+def split_chunks(
+    items: list[dict[str, Any]], chunk_size: int
+) -> list[list[dict[str, Any]]]:
+    if chunk_size < 1:
+        raise SystemExit("--segment-chunk-size must be at least 1")
+    return [
+        items[index : index + chunk_size] for index in range(0, len(items), chunk_size)
+    ]
+
+
+def write_segment_chunks(
+    target_dir: Path, segments: list[dict[str, Any]], chunk_size: int
+) -> list[dict[str, Any]]:
+    chunk_dir = target_dir / "chunks"
+    if chunk_dir.exists():
+        shutil.rmtree(chunk_dir)
+    refs = []
+    for index, chunk in enumerate(split_chunks(segments, chunk_size), start=1):
+        name = f"chunks/segments-{index:03d}.json"
+        write_json(target_dir / name, {"schema": 1, "segments": chunk})
+        refs.append(
+            {
+                "path": name,
+                "count": len(chunk),
+                "startSec": chunk[0]["startSec"],
+                "endSec": chunk[-1]["endSec"],
+            }
+        )
+    return refs
+
+
 def reader_relative(reader_path: str, target: str) -> str:
     rel = posixpath.relpath(target, start=reader_path.strip("/"))
     if rel.startswith("../"):
@@ -98,6 +135,7 @@ def stage_book(
     book: dict[str, Any],
     reader_path: str,
     artifact_subdir: str,
+    segment_chunk_size: int,
 ) -> dict[str, str]:
     book_id = safe_id(book["id"])
     allowed = PUBLIC_BOOKS.get(book_id)
@@ -127,7 +165,9 @@ def stage_book(
         raise SystemExit(f"manifest id is not allowlisted: {book_id}")
     if manifest.get("title") != allowed["title"] or manifest.get("author") != allowed["author"]:
         raise SystemExit(f"manifest metadata is not allowlisted: {book_id}")
-    public_manifest = public_manifest_from(book_id, allowed, book, manifest)
+    public_segments = public_segments_from(book_id, manifest)
+    chunk_refs = write_segment_chunks(target_dir, public_segments, segment_chunk_size)
+    public_manifest = public_manifest_from(book_id, allowed, book, manifest, chunk_refs)
     write_json(target_dir / "manifest.json", public_manifest)
     return {
         "id": book_id,
@@ -140,15 +180,10 @@ def stage_book(
     }
 
 
-def public_manifest_from(
-    book_id: str,
-    allowed: dict[str, str],
-    book: dict[str, Any],
-    manifest: dict[str, Any],
-) -> dict[str, Any]:
+def public_segments_from(book_id: str, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     segments = manifest.get("segments")
     if not isinstance(segments, list) or not segments:
-            raise SystemExit(f"manifest has no public segments: {book_id}")
+        raise SystemExit(f"manifest has no public segments: {book_id}")
     public_segments = []
     for segment in segments:
         if not isinstance(segment, dict):
@@ -161,6 +196,16 @@ def public_manifest_from(
                 "text": str(segment["text"]),
             }
         )
+    return public_segments
+
+
+def public_manifest_from(
+    book_id: str,
+    allowed: dict[str, str],
+    book: dict[str, Any],
+    manifest: dict[str, Any],
+    chunk_refs: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "id": allowed["manifestId"],
         "title": allowed["title"],
@@ -171,7 +216,8 @@ def public_manifest_from(
         "audio": "demo.m4a",
         "cover": "cover.svg",
         "durationSec": float(manifest["durationSec"]),
-        "segments": public_segments,
+        "segmentCount": sum(ref["count"] for ref in chunk_refs),
+        "segmentChunks": chunk_refs,
     }
 
 
@@ -197,6 +243,7 @@ def main() -> None:
                 book,
                 args.reader_path,
                 args.artifact_subdir,
+                args.segment_chunk_size,
             )
             by_id[entry["id"]] = entry
     else:

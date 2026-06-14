@@ -58,6 +58,10 @@ The Pages UI tries `releaseAudio.url` first when present and falls back to `audi
 
 The `-10` and `+10` buttons seek by seconds. Use the Speed menu to change playback tempo in the browser without regenerating audio.
 
+The reader saves per-book playback position in browser `localStorage`.
+
+`--rough-timings` in the Kokoro helper updates manifest timings from generated segment audio duration. It still uses precomputed segment boundaries from the manifest; it is not word-level forced alignment.
+
 ## layout
 
 ```text
@@ -88,7 +92,8 @@ The `-10` and `+10` buttons seek by seconds. Use the Speed menu to change playba
 - `audio`: relative path to pre-generated audio
 - `releaseAudio.url`: optional GitHub release asset URL preferred by the UI
 - `cover`: relative path to cover art
-- `segments`: ordered text spans with `startSec` and `endSec`
+- `segments`: ordered text spans with `startSec` and `endSec`, for small books
+- `segmentChunks`: ordered JSON chunk paths for long books
 
 Segment timing can be paragraph-level or sentence-level. This demo uses sentence-level timing.
 

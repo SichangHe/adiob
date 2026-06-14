@@ -37,6 +37,7 @@ select {
   display: grid;
   grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
   gap: 20px;
+  width: 100%;
   min-width: 0;
   max-width: none;
   margin: 0 auto;
@@ -182,19 +183,32 @@ h1 {
 .timeline {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 42px 1fr 42px;
+  grid-template-columns: 1fr 1fr;
   align-items: center;
-  gap: 10px;
-  width: calc(100vw - 36px);
+  gap: 2px 10px;
+  width: 100%;
   max-width: none;
   color: #566461;
   font-variant-numeric: tabular-nums;
 }
 
 #scrub {
+  grid-column: 1 / -1;
+  grid-row: 1;
   min-width: 0;
   width: 100%;
   accent-color: var(--accent);
+}
+
+#current-time {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+#duration {
+  grid-column: 2;
+  grid-row: 2;
+  text-align: right;
 }
 
 .license {
@@ -347,6 +361,6 @@ h1 {
   }
 
   .timeline {
-    width: calc(100vw - 24px);
+    width: 100%;
   }
 }

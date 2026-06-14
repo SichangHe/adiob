@@ -38,7 +38,8 @@ private book artifacts
 - Pages staging
   - copies only generated artifacts from private catalog entries with `publish: true`
   - does not copy `texts/`
-  - rewrites staged manifests to local artifact paths
+  - rewrites staged manifests to local audio, cover, and segment chunk paths
+  - writes transcript text into per-book `chunks/segments-*.json`
   - writes selected private entries into `_site/field-notes-819a/catalog.json`
 - reader path
   - `field-notes-819a/`

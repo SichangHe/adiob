@@ -26,8 +26,8 @@ voice and publication workflow
   - 🤖 long inputs are split before TTS
     - 🤖 default chunk size is `--max-tts-chars 1800`
     - 🤖 lower it only if the TTS backend still truncates or fails
-  - `--rough-timings` updates segment times by text length after generation
-  - production-quality alignment should replace rough timings with sentence or word alignment
+  - `--rough-timings` updates segment times from generated segment audio duration
+  - production-quality alignment can still replace generated segment timing with word alignment
 - local playback
   - `python3 scripts/serve-local.py 8000` serves existing files from disk
   - local audio seeking requires byte-range responses
@@ -47,6 +47,7 @@ voice and publication workflow
     - 🤖 pass `--skip-front-matter` when extracted text starts with publication metadata or a table of contents
   - generate local-only audio
     - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/<book>/manifest.json --out local/owned-books/<book>/demo.m4a --confirm-local-owned-use --rough-timings`
+  - `--rough-timings` preserves manifest segment boundaries during TTS
   - open the local demo
     - `http://127.0.0.1:8000/field-notes-819a/?manifest=local/owned-books/<book>/manifest.json`
   - these assets are not entries in `data/books.json` and are not release assets
@@ -72,3 +73,8 @@ voice and publication workflow
   - `audio` remains the local fallback when `releaseAudio.url` is absent or cannot be loaded
   - `releaseAudio.url` is tried first by the browser when present
   - the UI also shows a direct link to the release asset
+  - small manifests may include inline `segments`
+  - long manifests should use `segmentChunks`
+    - chunk paths are relative to the manifest
+    - each chunk contains ordered segment objects with `startSec`, `endSec`, and `text`
+  - the reader stores per-book playback progress in browser `localStorage`

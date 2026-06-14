@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rough-timings",
         action="store_true",
-        help="Update manifest timings by text length after generation.",
+        help="Update manifest timings from generated segment audio duration.",
     )
     parser.add_argument(
         "--max-tts-chars",
@@ -117,17 +117,15 @@ def manifest_requires_local_mode(manifest_path: Path, manifest: dict[str, Any]) 
     )
 
 
-def segment_text(manifest: dict[str, Any]) -> str:
+def manifest_segments(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     segments = manifest.get("segments")
     if not isinstance(segments, list) or not segments:
         raise SystemExit("manifest must contain a non-empty `segments` list")
-    texts = []
     for segment in segments:
         text = segment.get("text") if isinstance(segment, dict) else None
         if not isinstance(text, str) or not text.strip():
             raise SystemExit("each segment must contain non-empty `text`")
-        texts.append(text.strip())
-    return "\n".join(texts)
+    return segments
 
 
 def require_tools(out: Path) -> None:
@@ -167,8 +165,8 @@ def split_tts_chunks(text: str, max_chars: int) -> list[str]:
 
 
 def write_kokoro_wav(
-    text: str, out: Path, lang: str, voice: str, max_tts_chars: int
-) -> None:
+    segments: list[dict[str, Any]], out: Path, lang: str, voice: str, max_tts_chars: int
+) -> list[tuple[float, float]]:
     try:
         import soundfile as sf
         from kokoro import KPipeline
@@ -180,13 +178,25 @@ def write_kokoro_wav(
 
     pipeline = KPipeline(lang_code=lang, repo_id="hexgrad/Kokoro-82M")
     wrote_audio = False
+    current_frame = 0
+    timings = []
     with sf.SoundFile(out, "w", samplerate=SAMPLE_RATE_HZ, channels=1) as wav:
-        for chunk in split_tts_chunks(text, max_tts_chars):
-            for _, _, audio in pipeline(chunk, voice=voice):
-                wav.write(audio)
-                wrote_audio = True
+        for segment in segments:
+            text = segment["text"].strip()
+            start_sec = current_frame / SAMPLE_RATE_HZ
+            wrote_segment = False
+            for chunk in split_tts_chunks(text, max_tts_chars):
+                for _, _, audio in pipeline(chunk, voice=voice):
+                    wav.write(audio)
+                    current_frame += len(audio)
+                    wrote_audio = True
+                    wrote_segment = True
+            if not wrote_segment:
+                raise SystemExit("kokoro produced no audio for a segment")
+            timings.append((start_sec, current_frame / SAMPLE_RATE_HZ))
     if not wrote_audio:
         raise SystemExit("kokoro produced no audio")
+    return timings
 
 
 def encode_audio(wav: Path, out: Path) -> None:
@@ -236,23 +246,30 @@ def probe_duration_sec(path: Path) -> float:
     return float(result.stdout.strip())
 
 
-def apply_rough_timings(
-    manifest: dict[str, Any], duration_sec: float, out: Path, voice: str, lang: str
+def apply_generated_timings(
+    manifest: dict[str, Any],
+    timings: list[tuple[float, float]],
+    duration_sec: float,
+    out: Path,
+    voice: str,
+    lang: str,
 ) -> None:
     if out.is_absolute():
         raise SystemExit("refusing to write an absolute audio path into the manifest")
     segments = manifest["segments"]
-    weights = [max(1, len(segment["text"].strip())) for segment in segments]
-    total = sum(weights)
-    start_sec = 0.0
+    if len(timings) != len(segments):
+        raise SystemExit("generated timing count does not match segment count")
+    raw_duration_sec = timings[-1][1]
+    if raw_duration_sec <= 0:
+        raise SystemExit("generated audio duration is zero")
+    scale = duration_sec / raw_duration_sec
     for index, segment in enumerate(segments):
         if index == len(segments) - 1:
             end_sec = duration_sec
         else:
-            end_sec = start_sec + (duration_sec * weights[index] / total)
-        segment["startSec"] = round(start_sec, 3)
+            end_sec = timings[index][1] * scale
+        segment["startSec"] = round(timings[index][0] * scale, 3)
         segment["endSec"] = round(end_sec, 3)
-        start_sec = end_sec
     manifest["audio"] = str(out)
     manifest["durationSec"] = round(duration_sec, 3)
     manifest["voice"] = {
@@ -260,7 +277,7 @@ def apply_rough_timings(
         "tool": "kokoro",
         "voice": voice,
         "lang": lang,
-        "timing": "rough text-length allocation",
+        "timing": "generated segment audio duration",
     }
 
 
@@ -279,7 +296,7 @@ def main() -> None:
         raise SystemExit(
             "local-owned manifests require --confirm-local-owned-use and ignored `local/` output"
         )
-    text = segment_text(manifest)
+    segments = manifest_segments(manifest)
     manifest_out = args.out or Path(str(manifest.get("audio", "")))
     if not str(manifest_out):
         raise SystemExit("provide --out or set `audio` in the manifest")
@@ -289,11 +306,15 @@ def main() -> None:
     require_tools(audio_out)
     with tempfile.TemporaryDirectory(prefix="adiob-kokoro-") as tmp:
         wav = Path(tmp) / "audio.wav"
-        write_kokoro_wav(text, wav, args.lang, args.voice, args.max_tts_chars)
+        timings = write_kokoro_wav(
+            segments, wav, args.lang, args.voice, args.max_tts_chars
+        )
         encode_audio(wav, audio_out)
     duration_sec = probe_duration_sec(audio_out)
     if args.rough_timings:
-        apply_rough_timings(manifest, duration_sec, manifest_out, args.voice, args.lang)
+        apply_generated_timings(
+            manifest, timings, duration_sec, manifest_out, args.voice, args.lang
+        )
         manifest_path.write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
         )

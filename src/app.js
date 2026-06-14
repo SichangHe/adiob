@@ -21,6 +21,8 @@ let catalog = null;
 let activeId = "";
 let pendingSeekSec = null;
 let currentManifest = "";
+let restoringProgress = false;
+let renderSeq = 0;
 
 function renderBuildTag() {
   const build = buildTag?.dataset.build;
@@ -77,17 +79,85 @@ function rootPath(path) {
   return `../${path}`;
 }
 
-function assetPath(path) {
+function assetPath(path, manifestPath = currentManifest) {
   if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith("/")) {
     return path;
   }
   if (path.startsWith("local/") || path.startsWith("media/")) {
     return rootPath(path);
   }
-  if (!currentManifest) {
+  if (!manifestPath) {
     return rootPath(path);
   }
-  return new URL(path, new URL(currentManifest, window.location.href)).href;
+  return new URL(path, new URL(manifestPath, window.location.href)).href;
+}
+
+function normalizeSegment(segment, index) {
+  if (!segment || typeof segment !== "object") {
+    return { error: "manifest segment is not an object" };
+  }
+  const startSec = Number(segment.startSec);
+  const endSec = Number(segment.endSec);
+  const text = String(segment.text ?? "").trim();
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec < startSec) {
+    return { error: "manifest segment has invalid timing" };
+  }
+  if (!text) {
+    return { error: "manifest segment is missing text" };
+  }
+  return {
+    value: {
+      id: String(segment.id ?? `s${String(index + 1).padStart(3, "0")}`),
+      startSec,
+      endSec,
+      text,
+    },
+  };
+}
+
+function normalizeSegments(rawSegments, startIndex = 0) {
+  if (!Array.isArray(rawSegments) || !rawSegments.length) {
+    return { error: "manifest has no segments" };
+  }
+  const nextSegments = [];
+  for (const [index, segment] of rawSegments.entries()) {
+    const result = normalizeSegment(segment, startIndex + index);
+    if (result.error) {
+      return result;
+    }
+    nextSegments.push(result.value);
+  }
+  return { value: nextSegments };
+}
+
+async function loadSegments(nextBook, manifestPath) {
+  if (Array.isArray(nextBook.segments)) {
+    return normalizeSegments(nextBook.segments);
+  }
+  const chunks = nextBook.segmentChunks;
+  if (!Array.isArray(chunks) || !chunks.length) {
+    return { error: "manifest has no segment data" };
+  }
+  const nextSegments = [];
+  for (const chunk of chunks) {
+    const path = chunk?.path;
+    if (typeof path !== "string" || !path) {
+      return { error: "segment chunk is missing a path" };
+    }
+    const result = await loadJson(assetPath(path, manifestPath));
+    if (result.error) {
+      return result;
+    }
+    const rawSegments = Array.isArray(result.value)
+      ? result.value
+      : result.value?.segments;
+    const normalized = normalizeSegments(rawSegments, nextSegments.length);
+    if (normalized.error) {
+      return normalized;
+    }
+    nextSegments.push(...normalized.value);
+  }
+  return { value: nextSegments };
 }
 
 async function loadBook() {
@@ -137,33 +207,76 @@ function renderError(message) {
   segments.append(error);
 }
 
-function renderBook(nextBook) {
-  book = nextBook;
+function progressStorageKey(nextBook = book) {
+  const id = nextBook?.id || currentManifest || "unknown";
+  return `adiob.progress.${id}`;
+}
+
+function savedProgressSec(nextBook) {
+  try {
+    const value = Number(window.localStorage.getItem(progressStorageKey(nextBook)));
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveProgressSec(valueSec, explicit = false) {
+  if (!book || !Number.isFinite(valueSec)) {
+    return;
+  }
+  if (restoringProgress && valueSec <= 0 && !explicit) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(progressStorageKey(), String(Math.max(0, valueSec)));
+  } catch {
+    return;
+  }
+}
+
+async function renderBook(nextBook, manifestPath = currentManifest) {
+  if (manifestPath !== currentManifest) {
+    return;
+  }
+  const renderId = ++renderSeq;
+  const segmentResult = await loadSegments(nextBook, manifestPath);
+  if (renderId !== renderSeq || manifestPath !== currentManifest) {
+    return;
+  }
+  if (segmentResult.error) {
+    renderError(segmentResult.error);
+    return;
+  }
+  book = { ...nextBook, segments: segmentResult.value };
+  const restoredSec = Math.min(savedProgressSec(book), Number(book.durationSec) || 0);
+  restoringProgress = restoredSec > 0;
+  pendingSeekSec = restoredSec > 0 ? restoredSec : null;
   document.title = `${book.title} | adiob`;
   title.textContent = book.title;
   author.textContent = book.author;
   license.textContent = book.license;
-  cover.src = assetPath(book.cover);
+  cover.src = assetPath(book.cover, manifestPath);
   cover.alt = `${book.title} cover`;
   audio.dataset.releaseFallbackUsed = "0";
-  audio.src = assetPath(book.releaseAudio?.url || book.audio);
+  audio.src = assetPath(book.releaseAudio?.url || book.audio, manifestPath);
   setPlaybackRate();
-  renderReleaseAudio(book.releaseAudio);
+  renderReleaseAudio(book.releaseAudio, manifestPath);
   scrub.max = String(book.durationSec);
   duration.textContent = fmtTime(book.durationSec);
   segments.replaceChildren(...book.segments.map(renderSegment));
   activeId = "";
-  updateProgress(0);
+  updateProgress(restoredSec);
 }
 
-function renderReleaseAudio(track) {
+function renderReleaseAudio(track, manifestPath) {
   if (!track?.url) {
     releaseAudio.hidden = true;
     releaseAudio.removeAttribute("href");
     return;
   }
   releaseAudio.hidden = false;
-  releaseAudio.href = assetPath(track.url);
+  releaseAudio.href = assetPath(track.url, manifestPath);
   releaseAudio.textContent = track.asset ? `Release audio: ${track.asset}` : "Release audio";
 }
 
@@ -216,7 +329,7 @@ function updateProgress(valueSec) {
 }
 
 function maxPlaybackSec() {
-  if (Number.isFinite(audio.duration)) {
+  if (Number.isFinite(audio.duration) && audio.duration > 0) {
     return audio.duration;
   }
   if (Number.isFinite(book?.durationSec)) {
@@ -227,18 +340,32 @@ function maxPlaybackSec() {
 
 function seekTo(valueSec) {
   const targetSec = Math.min(Math.max(0, valueSec), maxPlaybackSec());
-  if (audio.readyState === 0) {
-    pendingSeekSec = targetSec;
-  } else {
-    audio.currentTime = targetSec;
+  const isRestoring = restoringProgress;
+  pendingSeekSec = targetSec;
+  if (audio.readyState >= 1) {
+    try {
+      audio.currentTime = targetSec;
+      if (!isRestoring || targetSec <= 0) {
+        pendingSeekSec = null;
+        restoringProgress = false;
+      }
+    } catch {
+      pendingSeekSec = targetSec;
+    }
   }
   updateProgress(targetSec);
+  saveProgressSec(targetSec, true);
 }
 
 function seekBy(deltaSec) {
   const scrubSec = Number(scrub.value);
   const currentSec =
-    audio.readyState === 0 && Number.isFinite(scrubSec) ? scrubSec : audio.currentTime;
+    pendingSeekSec ??
+    (audio.readyState >= 1 && Number.isFinite(audio.currentTime)
+      ? audio.currentTime
+      : Number.isFinite(scrubSec)
+        ? scrubSec
+        : 0);
   seekTo(currentSec + deltaSec);
 }
 
@@ -262,6 +389,9 @@ play.addEventListener("click", () => {
 scrub.addEventListener("input", () => {
   seekTo(Number(scrub.value));
 });
+scrub.addEventListener("change", () => {
+  seekTo(Number(scrub.value));
+});
 playbackRate.addEventListener("change", setPlaybackRate);
 bookSelect.addEventListener("change", async () => {
   if (!catalog) {
@@ -276,21 +406,25 @@ bookSelect.addEventListener("change", async () => {
   url.searchParams.delete("manifest");
   url.searchParams.set("book", item.id);
   window.history.replaceState(null, "", url);
-  currentManifest = item.manifest;
-  const result = await loadJson(item.manifest);
+  const manifestPath = item.manifest;
+  currentManifest = manifestPath;
+  const result = await loadJson(manifestPath);
+  if (manifestPath !== currentManifest) {
+    return;
+  }
   if (result.error) {
     renderError(result.error);
     return;
   }
-  renderBook(result.value);
+  await renderBook(result.value, manifestPath);
 });
 audio.addEventListener("loadedmetadata", () => {
   const maxSec = maxPlaybackSec();
   scrub.max = String(maxSec);
   duration.textContent = fmtTime(maxSec);
   if (pendingSeekSec !== null) {
-    audio.currentTime = pendingSeekSec;
-    pendingSeekSec = null;
+    const targetSec = Math.min(Math.max(0, pendingSeekSec), maxSec);
+    seekTo(targetSec);
   }
 });
 audio.addEventListener("error", () => {
@@ -301,7 +435,14 @@ audio.addEventListener("error", () => {
   audio.src = assetPath(book.audio);
   audio.load();
 });
-audio.addEventListener("timeupdate", () => updateProgress(audio.currentTime));
+audio.addEventListener("timeupdate", () => {
+  updateProgress(audio.currentTime);
+  if (restoringProgress && audio.currentTime > 0) {
+    restoringProgress = false;
+    pendingSeekSec = null;
+  }
+  saveProgressSec(audio.currentTime);
+});
 audio.addEventListener("play", () => setPlaying(true));
 audio.addEventListener("pause", () => setPlaying(false));
 audio.addEventListener("ended", () => setPlaying(false));
@@ -311,5 +452,5 @@ const result = await loadBook();
 if (result.error) {
   renderError(result.error);
 } else {
-  renderBook(result.value);
+  await renderBook(result.value, currentManifest);
 }
