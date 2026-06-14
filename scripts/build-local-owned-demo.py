@@ -10,15 +10,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-DEFAULT_TEXT = Path(
-    "owned-text/the-contrarian-peter-thiel-and-the-rise-of-the-silicon-valley-oligarchs.txt"
-)
-DEFAULT_OUT_DIR = Path("local/owned-books/the-contrarian")
-DEFAULT_ID = "the-contrarian-local"
-DEFAULT_TITLE = (
-    "The Contrarian: Peter Thiel and the Rise of the Silicon Valley Oligarchs"
-)
-DEFAULT_AUTHOR = "Max Chafkin"
+DEFAULT_OUT_DIR = Path("local/owned-books/local-demo")
+DEFAULT_ID = "local-demo"
+DEFAULT_TITLE = "Local Demo"
+DEFAULT_AUTHOR = ""
 DEFAULT_MAX_CHARS = 0
 SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[\"'A-Z])")
 BODY_HEADING = re.compile(
@@ -31,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build an ignored local adiob manifest from owned-access text."
     )
-    parser.add_argument("--text", type=Path, default=DEFAULT_TEXT)
+    parser.add_argument("--text", required=True, type=Path)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--id", default=DEFAULT_ID)
     parser.add_argument("--title", default=DEFAULT_TITLE)

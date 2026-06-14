@@ -23,12 +23,12 @@ uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py 
 Ignored local manifests can be opened without adding them to the public catalog:
 
 ```sh
-python3 scripts/build-local-owned-demo.py --skip-front-matter --max-chars 30000 --confirm-local-owned-use
-uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/the-contrarian/manifest.json --out local/owned-books/the-contrarian/demo.m4a --confirm-local-owned-use --rough-timings
+python3 scripts/build-local-owned-demo.py --text owned-text/<book>.txt --out-dir local/owned-books/<book> --id <book>-local --title '<title>' --author '<author>' --skip-front-matter --max-chars 30000 --confirm-local-owned-use
+uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/<book>/manifest.json --out local/owned-books/<book>/demo.m4a --confirm-local-owned-use --rough-timings
 python3 scripts/serve-local.py 8000
 ```
 
-Open `http://127.0.0.1:8000/field-notes-819a/?manifest=local/owned-books/the-contrarian/manifest.json`.
+Open `http://127.0.0.1:8000/field-notes-819a/?manifest=local/owned-books/<book>/manifest.json`.
 
 Local owned-book manifests and audio stay under ignored `local/`. They are not release assets, not GitHub Pages content, and not entries in `data/books.json`. See `docs/local-owned-demo.md`.
 

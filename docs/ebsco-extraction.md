@@ -15,7 +15,7 @@ ebsco ebook text extraction
   - `owned-text/` is ignored by git
   - the script rejects `--out` paths outside repo-local `owned-text/`
 - current book command
-  - `node scripts/extract-ebsco-ebook-text.mjs --start first-toc --out owned-text/the-contrarian.txt`
+  - `node scripts/extract-ebsco-ebook-text.mjs --start first-toc --out owned-text/<book>.txt`
 - other books on the same site
   - open the EBSCO EPUB in the same browser-use Chrome window
   - run the command with a different `--out`
