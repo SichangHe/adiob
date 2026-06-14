@@ -102,7 +102,7 @@ The reader saves per-book playback position in browser `localStorage`.
 - `segments`: ordered text spans with `startSec` and `endSec`, for small books
 - `segmentChunks`: ordered JSON chunk paths for long books
 
-Segment timing can be paragraph-level or sentence-level. This demo uses sentence-level timing.
+Segment timing can be paragraph-level or sentence-level. The public sample uses sentence-level timing; the private book workflow uses paragraph-level timing so pages do not split paragraphs.
 
 ## rights
 

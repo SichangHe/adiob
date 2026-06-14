@@ -47,6 +47,7 @@ let speechUtterance = null;
 let speechProgressTimer = null;
 let speechPlaying = false;
 let speechSeq = 0;
+let scrubDragging = false;
 
 function renderBuildTag() {
   const build = buildTag?.dataset.build;
@@ -513,10 +514,13 @@ function audioChunkIndexAt(valueSec) {
   if (!chunks.length) {
     return -1;
   }
+  if (valueSec >= chunks.at(-1).endSec - AUDIO_CHUNK_TOLERANCE_SEC) {
+    return chunks.length - 1;
+  }
   const index = chunks.findIndex(
     (chunk) =>
       valueSec >= chunk.startSec - AUDIO_CHUNK_TOLERANCE_SEC &&
-      valueSec < chunk.endSec + AUDIO_CHUNK_TOLERANCE_SEC,
+      valueSec < chunk.endSec,
   );
   if (index >= 0) {
     return index;
@@ -946,6 +950,26 @@ function seekTo(valueSec) {
   }
 }
 
+function scrubValueSec() {
+  const valueSec = Number(scrub.value);
+  return Number.isFinite(valueSec) ? valueSec : 0;
+}
+
+function previewScrub(valueSec) {
+  const targetSec = Math.min(Math.max(0, valueSec), maxPlaybackSec());
+  void ensurePageForTime(targetSec).then((switched) => {
+    if (switched) {
+      updateProgress(targetSec);
+    }
+  });
+  updateProgress(targetSec);
+}
+
+function commitScrubSeek() {
+  scrubDragging = false;
+  seekTo(scrubValueSec());
+}
+
 function seekBy(deltaSec) {
   seekTo(currentPlaybackSec() + deltaSec);
 }
@@ -1007,6 +1031,17 @@ function togglePlayback() {
   audio.pause();
 }
 
+function releaseShortcutFocus() {
+  const selection = window.getSelection?.();
+  if (selection && !selection.isCollapsed) {
+    selection.removeAllRanges();
+  }
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active !== document.body) {
+    active.blur();
+  }
+}
+
 function shouldHandleKeyboard(event) {
   if (event.altKey || event.ctrlKey || event.metaKey) {
     return false;
@@ -1022,59 +1057,76 @@ function shouldHandleKeyboard(event) {
   if (input instanceof HTMLInputElement) {
     return input.type === "range";
   }
-  return !target.closest(
-    "button, a[href], select, [role='button'], [role='link']",
-  );
+  return true;
 }
 
 back.addEventListener("click", () => seekBy(-SEEK_STEP_SEC));
 forward.addEventListener("click", () => seekBy(SEEK_STEP_SEC));
 play.addEventListener("click", togglePlayback);
-document.addEventListener("keydown", (event) => {
-  if (!shouldHandleKeyboard(event)) {
-    return;
-  }
-  if (event.key === " ") {
-    event.preventDefault();
-    togglePlayback();
-    return;
-  }
-  if (event.key === "ArrowLeft") {
-    event.preventDefault();
-    seekBy(-SEEK_STEP_SEC);
-    return;
-  }
-  if (event.key === "ArrowRight") {
-    event.preventDefault();
-    seekBy(SEEK_STEP_SEC);
-    return;
-  }
-  if (event.key === "ArrowUp") {
-    event.preventDefault();
-    adjustVolume(VOLUME_STEP);
-    return;
-  }
-  if (event.key === "ArrowDown") {
-    event.preventDefault();
-    adjustVolume(-VOLUME_STEP);
-    return;
-  }
-  if (event.key === "<") {
-    event.preventDefault();
-    adjustPlaybackRate(-RATE_STEP);
-    return;
-  }
-  if (event.key === ">") {
-    event.preventDefault();
-    adjustPlaybackRate(RATE_STEP);
-  }
-});
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (!shouldHandleKeyboard(event)) {
+      return;
+    }
+    if (event.key === " ") {
+      event.preventDefault();
+      releaseShortcutFocus();
+      togglePlayback();
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      releaseShortcutFocus();
+      seekBy(-SEEK_STEP_SEC);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      releaseShortcutFocus();
+      seekBy(SEEK_STEP_SEC);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      releaseShortcutFocus();
+      adjustVolume(VOLUME_STEP);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      releaseShortcutFocus();
+      adjustVolume(-VOLUME_STEP);
+      return;
+    }
+    if (event.key === "<") {
+      event.preventDefault();
+      releaseShortcutFocus();
+      adjustPlaybackRate(-RATE_STEP);
+      return;
+    }
+    if (event.key === ">") {
+      event.preventDefault();
+      releaseShortcutFocus();
+      adjustPlaybackRate(RATE_STEP);
+    }
+  },
+  { capture: true },
+);
 scrub.addEventListener("input", () => {
-  seekTo(Number(scrub.value));
+  const valueSec = scrubValueSec();
+  if (scrubDragging) {
+    previewScrub(valueSec);
+    return;
+  }
+  seekTo(valueSec);
 });
-scrub.addEventListener("change", () => {
-  seekTo(Number(scrub.value));
+scrub.addEventListener("change", commitScrubSeek);
+scrub.addEventListener("pointerdown", () => {
+  scrubDragging = true;
 });
+scrub.addEventListener("pointerup", commitScrubSeek);
+scrub.addEventListener("pointercancel", commitScrubSeek);
 playbackRate.addEventListener("change", () => setPlaybackRate({ persist: true }));
 pageSelect.addEventListener("change", async () => {
   const index = Number(pageSelect.value);
@@ -1168,6 +1220,9 @@ audio.addEventListener("error", () => {
 });
 audio.addEventListener("timeupdate", () => {
   const valueSec = audioGlobalTime();
+  if (scrubDragging) {
+    return;
+  }
   void ensurePageForTime(valueSec);
   updateProgress(valueSec);
   if (restoringProgress && valueSec > 0) {

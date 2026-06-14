@@ -16,12 +16,9 @@ from urllib.parse import urlparse
 
 DEFAULT_ARTIFACT_SUBDIR = "archive-cache-a17"
 DEFAULT_SEGMENT_PAGE_SIZE = 48
-DEFAULT_TEXT_PAGE_CHARS = 12000
 CHUNK_TIMING_TOLERANCE_SEC = 0.05
-ROUGH_CHARS_PER_SEC = 13.0
 RELEASE_AUDIO_HOST = "github.com"
 RELEASE_AUDIO_PATH_PREFIX = "/SichangHe/adiob/releases/download/"
-SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[\"'A-Z])")
 PAGE_HEADING = re.compile(
     r"^(introduction|prologue|epilogue|chapter\b|part\b|book\b|section\b|\d{1,3}\.)",
     re.IGNORECASE,
@@ -38,9 +35,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact-subdir", default=DEFAULT_ARTIFACT_SUBDIR)
     parser.add_argument(
         "--segment-page-size", type=int, default=DEFAULT_SEGMENT_PAGE_SIZE
-    )
-    parser.add_argument(
-        "--text-page-chars", type=int, default=DEFAULT_TEXT_PAGE_CHARS
     )
     return parser.parse_args()
 
@@ -99,35 +93,11 @@ def require_generated_path(
     return Path(expected)
 
 
-def require_catalog_path(private_root: Path, book_id: str, value: Any) -> Path:
-    if not isinstance(value, str) or not value:
-        raise SystemExit(f"private catalog entry {book_id} is missing text")
-    path = private_root / value
-    resolved = path.resolve(strict=False)
-    if not resolved.is_relative_to(private_root.resolve(strict=False)):
-        raise SystemExit(f"private catalog entry {book_id} has unsafe text path")
-    if not path.is_file():
-        raise SystemExit(f"missing private artifact: {path}")
-    return path
-
-
 def copy_file(source: Path, target: Path) -> None:
     if not source.is_file():
         raise SystemExit(f"missing private artifact: {source}")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
-
-
-def safe_relative_file(base: Path, value: Any, label: str) -> Path:
-    if not isinstance(value, str) or not value:
-        raise SystemExit(f"{label} is missing a relative file path")
-    path = Path(value)
-    if path.is_absolute() or ".." in path.parts:
-        raise SystemExit(f"{label} must be a relative file path")
-    resolved = (base / path).resolve(strict=False)
-    if not resolved.is_relative_to(base.resolve(strict=False)):
-        raise SystemExit(f"{label} escapes its artifact directory")
-    return path
 
 
 def release_audio_url(value: Any) -> str | None:
@@ -205,21 +175,19 @@ def stage_book(
     reader_path: str,
     artifact_subdir: str,
     segment_page_size: int,
-    text_page_chars: int,
 ) -> tuple[dict[str, str], bool]:
     book_id = safe_id(book["id"])
     target_dir = site_root / artifact_subdir / book_id
     generated = book.get("generated")
-    if isinstance(generated, dict) and generated_has_full_release_audio(
+    if not isinstance(generated, dict) or not generated_has_full_release_audio(
         private_root, book_id, generated
     ):
-        public_manifest = stage_generated_book(
-            private_root, target_dir, book_id, book, generated, segment_page_size
+        raise SystemExit(
+            f"published private catalog entry {book_id} is missing full release audio"
         )
-    else:
-        public_manifest = stage_text_book(
-            private_root, target_dir, book_id, book, text_page_chars
-        )
+    public_manifest = stage_generated_book(
+        private_root, target_dir, book_id, book, generated, segment_page_size
+    )
     write_json(target_dir / "manifest.json", public_manifest)
     return (
         {
@@ -308,29 +276,6 @@ def stage_generated_book(
     )
 
 
-def stage_text_book(
-    private_root: Path,
-    target_dir: Path,
-    book_id: str,
-    book: dict[str, Any],
-    text_page_chars: int,
-) -> dict[str, Any]:
-    text_path = require_catalog_path(private_root, book_id, book.get("text"))
-    pages = text_pages_from(text_path, text_page_chars)
-    refs = write_page_chunks(target_dir, pages)
-    cover = cover_svg(str(book.get("title") or book_id), str(book.get("author") or ""))
-    write_text(target_dir / "cover.svg", cover)
-    return public_manifest_from(
-        book_id,
-        book,
-        {},
-        refs,
-        audio=None,
-        cover="cover.svg",
-        timing="rough text timing",
-    )
-
-
 def public_segments_from(book_id: str, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     segments = manifest.get("segments")
     if not isinstance(segments, list) or not segments:
@@ -411,91 +356,6 @@ def segment_pages_from(
     return pages
 
 
-def normalize_space(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def normalized_lines(path: Path) -> list[str]:
-    with path.open(encoding="utf-8") as source:
-        return [text for line in source if (text := normalize_space(line))]
-
-
-def is_page_heading(line: str) -> bool:
-    return (
-        PAGE_HEADING.search(line) is not None
-        and len(line) <= 120
-        and re.search(r"\.{4,}", line) is None
-    )
-
-
-def split_sentences(text: str) -> list[str]:
-    parts = [part.strip() for part in SENTENCE_BREAK.split(text) if part.strip()]
-    return parts or [text]
-
-
-def rough_segments(
-    texts: list[str], page_index: int, start_sec: float
-) -> tuple[list[dict[str, Any]], float]:
-    current_sec = start_sec
-    segments = []
-    for index, text in enumerate(texts, start=1):
-        duration_sec = max(2.0, len(text) / ROUGH_CHARS_PER_SEC)
-        end_sec = current_sec + duration_sec
-        segments.append(
-            {
-                "id": f"p{page_index:03d}-s{index:03d}",
-                "startSec": round(current_sec, 3),
-                "endSec": round(end_sec, 3),
-                "text": text,
-            }
-        )
-        current_sec = end_sec
-    return segments, current_sec
-
-
-def title_from_lines(lines: list[str], index: int) -> str:
-    for line in lines[:4]:
-        if is_page_heading(line):
-            return line[:80]
-    return f"Page {index}"
-
-
-def text_pages_from(path: Path, page_chars: int) -> list[dict[str, Any]]:
-    if page_chars < 1000:
-        raise SystemExit("--text-page-chars must be at least 1000")
-    lines = normalized_lines(path)
-    if not lines:
-        raise SystemExit(f"private text is empty: {path}")
-    page_lines: list[str] = []
-    page_char_count = 0
-    raw_pages: list[list[str]] = []
-    for line in lines:
-        starts_page = is_page_heading(line) and page_char_count >= 1000
-        too_large = page_char_count + len(line) + 1 > page_chars and page_lines
-        if starts_page or too_large:
-            raw_pages.append(page_lines)
-            page_lines = []
-            page_char_count = 0
-        page_lines.append(line)
-        page_char_count += len(line) + 1
-    if page_lines:
-        raw_pages.append(page_lines)
-    pages = []
-    current_sec = 0.0
-    for index, lines_for_page in enumerate(raw_pages, start=1):
-        text = normalize_space(" ".join(lines_for_page))
-        segments, current_sec = rough_segments(
-            split_sentences(text), index, current_sec
-        )
-        pages.append(
-            {
-                "title": title_from_lines(lines_for_page, index),
-                "segments": segments,
-            }
-        )
-    return pages
-
-
 def cover_svg(title: str, author: str) -> str:
     safe_title = html.escape(title)
     safe_author = html.escape(author)
@@ -571,6 +431,8 @@ def main() -> None:
             shutil.rmtree(artifact_root)
         private_catalog = read_json(private_catalog_path)
         for book in private_catalog.get("books", []):
+            if not isinstance(book, dict) or book.get("publish") is not True:
+                continue
             entry, has_audio = stage_book(
                 private_root,
                 site_root,
@@ -578,7 +440,6 @@ def main() -> None:
                 args.reader_path,
                 artifact_subdir,
                 args.segment_page_size,
-                args.text_page_chars,
             )
             staged_private_entries.append(entry["id"])
             if has_audio:
@@ -586,6 +447,7 @@ def main() -> None:
             by_id[entry["id"]] = entry
     else:
         print("no private book catalog found; staging public catalog only")
+    staged_books = list(by_id.values())
     staged_catalog = {
         "defaultBook": (
             staged_audio_entries[0]
@@ -594,11 +456,11 @@ def main() -> None:
             if staged_private_entries
             else public_catalog.get("defaultBook")
         ),
-        "books": list(by_id.values()),
+        "books": staged_books,
     }
     reader_catalog_path = site_root / args.reader_path / "catalog.json"
     write_json(reader_catalog_path, staged_catalog)
-    print(f"staged {len(staged_catalog['books'])} catalog entries")
+    print(f"staged {len(staged_books)} catalog entries")
 
 
 if __name__ == "__main__":

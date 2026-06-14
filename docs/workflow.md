@@ -62,10 +62,15 @@ voice and publication workflow
 - publish catalog audio
   - use this to process every catalog entry into deployable audio
   - command
-    - `scripts/process-private-book-release.py --private-root ../adiob-private-artifacts --all-books --release-tag audio-owned-chunks-v2 -R SichangHe/adiob --confirm-rights`
+    - `scripts/process-private-book-release.py --private-root ../adiob-private-artifacts --all-books --release-tag audio-owned-chunks-v3 -R SichangHe/adiob --confirm-rights`
   - use `--book-id <id>` instead of `--all-books` to process one book
   - omit `--max-chars` for full-book audio
     - `--max-chars 30000` intentionally makes an excerpt of roughly 30 minutes
+  - front matter is skipped by default
+    - this keeps title pages, tables of contents, biographies, and catalog preambles out of the generated reader
+    - pass `--include-front-matter` only when the front matter should be read aloud
+  - source paragraphs become manifest segments
+    - page boundaries and audio chunk boundaries therefore stay on complete paragraphs
   - script steps
     - builds a full ignored manifest under `local/owned-books/<book>`
     - generates chunked Kokoro audio under `local/owned-books/<book>/chunks`
@@ -79,8 +84,9 @@ voice and publication workflow
   - update `.github/workflows/pages.yml` `PRIVATE_BOOK_ARTIFACT_REF` to that private commit SHA
   - commit and push the public repo to deploy the linked catalog
   - Pages staging includes every catalog entry
-    - entries without complete generated chunks are staged as full text
-    - entries with a full-book generation marker and release-backed chunks are staged with audio
+    - private entries must set `publish: true`
+    - published private entries must have a full-book generation marker and release-backed chunks
+    - staging fails rather than deploying private text-only browser speech fallback
 - publish release audio
   - release assets give stable public URLs and avoid making Pages the primary audio host
   - source: GitHub CLI says `gh release upload <tag> <files>...`

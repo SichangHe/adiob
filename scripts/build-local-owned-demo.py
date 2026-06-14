@@ -17,9 +17,11 @@ DEFAULT_AUTHOR = ""
 DEFAULT_MAX_CHARS = 0
 SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[\"'A-Z])")
 BODY_HEADING = re.compile(
-    r"^(introduction|introductory|prologue|chapter\b|chapter\s+[ivxlcdm0-9]+)\b",
+    r"^(introduction|introductory|prologue|chapter\b|part\b|book\b|section\b|\d{1,3}\.)",
     re.IGNORECASE,
 )
+PAGE_NUMBER = re.compile(r"^(?:\d+|[ivxlcdm]+)$", re.IGNORECASE)
+SPLIT_INITIAL_CAP = re.compile(r"\b([A-Z])\s+([A-Z]{4,})\b")
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +92,20 @@ def normalize_space(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def clean_line(text: str) -> str:
+    return SPLIT_INITIAL_CAP.sub(r"\1\2", normalize_space(text))
+
+
+def paragraph_text(lines: list[str]) -> str:
+    parts: list[str] = []
+    for line in lines:
+        if parts and parts[-1].endswith("-") and line[:1].islower():
+            parts[-1] = parts[-1][:-1] + line
+        else:
+            parts.append(line)
+    return clean_line(" ".join(parts))
+
+
 def require_boundary(text_path: Path, out_dir: Path) -> None:
     root = repo_root()
     if not strictly_under(text_path, root / "owned-text"):
@@ -116,37 +132,53 @@ def write_local_file(path: Path, text: str) -> None:
     os.replace(tmp_path, path)
 
 
-def normalized_source_lines(path: Path) -> list[tuple[int, str]]:
+def normalized_source_paragraphs(path: Path) -> list[tuple[int, str]]:
+    paragraphs: list[tuple[int, str]] = []
+    lines: list[str] = []
+    start_line = 0
+
+    def flush() -> None:
+        nonlocal lines, start_line
+        if lines:
+            paragraphs.append((start_line, paragraph_text(lines)))
+            lines = []
+            start_line = 0
+
     with path.open(encoding="utf-8") as source:
-        return [
-            (line_number, text)
-            for line_number, line in enumerate(source, start=1)
-            if (text := normalize_space(line))
-        ]
+        for line_number, line in enumerate(source, start=1):
+            text = clean_line(line)
+            if not text or PAGE_NUMBER.fullmatch(text):
+                flush()
+                continue
+            if not lines:
+                start_line = line_number
+            lines.append(text)
+    flush()
+    return paragraphs
 
 
-def body_heading_index(lines: list[tuple[int, str]]) -> int | None:
-    for index, (_, line) in enumerate(lines):
-        if not BODY_HEADING.search(line):
+def body_heading_index(paragraphs: list[tuple[int, str]]) -> int | None:
+    for index, (_, paragraph) in enumerate(paragraphs):
+        if not BODY_HEADING.search(paragraph):
             continue
-        following = [text for _, text in lines[index + 1 : index + 16]]
-        if sum(len(text) >= 40 for text in following) >= 8:
+        following = [text for _, text in paragraphs[index + 1 : index + 10]]
+        if sum(len(text) >= 40 for text in following) >= 2:
             return index
     return None
 
 
 def start_index(
-    lines: list[tuple[int, str]], start_line: int | None, skip_front_matter: bool
+    paragraphs: list[tuple[int, str]], start_line: int | None, skip_front_matter: bool
 ) -> int:
     if start_line is not None:
         if start_line < 1:
             raise SystemExit("--start-line must be at least 1")
-        for index, (line_number, _) in enumerate(lines):
+        for index, (line_number, _) in enumerate(paragraphs):
             if line_number >= start_line:
                 return index
         raise SystemExit("--start-line is after the end of the source text")
     if skip_front_matter:
-        index = body_heading_index(lines)
+        index = body_heading_index(paragraphs)
         if index is None:
             raise SystemExit("could not find an introduction/prologue/chapter body heading")
         return index
@@ -160,31 +192,29 @@ def read_excerpt(
         raise SystemExit("--max-chars must be at least 600")
     chunks: list[str] = []
     n_chars = 0
-    lines = normalized_source_lines(path)
-    for _, text in lines[start_index(lines, start_line, skip_front_matter) :]:
-        chunks.append(text)
-        n_chars += len(text) + 1
-        if max_chars and n_chars >= max_chars + 800:
+    paragraphs = normalized_source_paragraphs(path)
+    for _, text in paragraphs[start_index(paragraphs, start_line, skip_front_matter) :]:
+        if max_chars and chunks and n_chars + len(text) + 2 > max_chars:
             break
-    excerpt = normalize_space(" ".join(chunks))
+        chunks.append(text)
+        n_chars += len(text) + 2
+        if max_chars and n_chars >= max_chars:
+            break
+    excerpt = "\n\n".join(chunks).strip()
     if not excerpt:
         raise SystemExit("no text found in owned input")
-    if not max_chars:
-        return excerpt
-    if len(excerpt) <= max_chars:
-        return excerpt
-    end = max(
-        excerpt.rfind(".", 0, max_chars),
-        excerpt.rfind("?", 0, max_chars),
-        excerpt.rfind("!", 0, max_chars),
-    )
-    if end >= max(400, max_chars // 2):
-        return excerpt[: end + 1]
-    return excerpt[:max_chars].rsplit(" ", 1)[0].rstrip(",;:") + "."
+    return excerpt
 
 
 def split_segments(excerpt: str) -> list[str]:
-    segments = [part.strip() for part in SENTENCE_BREAK.split(excerpt) if part.strip()]
+    paragraphs = [
+        normalize_space(part) for part in re.split(r"\n{2,}", excerpt) if part.strip()
+    ]
+    segments = (
+        paragraphs
+        if len(paragraphs) > 1
+        else [part.strip() for part in SENTENCE_BREAK.split(excerpt) if part.strip()]
+    )
     if not segments:
         raise SystemExit("excerpt did not produce segments")
     return segments

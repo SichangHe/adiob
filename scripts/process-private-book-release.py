@@ -17,7 +17,7 @@ from typing import Any
 DEFAULT_PRIVATE_ROOT = Path("../adiob-private-artifacts")
 DEFAULT_LOCAL_ROOT = Path("local/owned-books")
 DEFAULT_REPO = "SichangHe/adiob"
-DEFAULT_RELEASE_TAG = "audio-owned-chunks-v2"
+DEFAULT_RELEASE_TAG = "audio-owned-chunks-v3"
 DEFAULT_CHUNK_SEGMENTS = 48
 DEFAULT_CHUNK_EXT = ".m4a"
 DEFAULT_MAX_TTS_CHARS = 1800
@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-chars", type=int, default=0)
     parser.add_argument("--start-line", type=int)
     parser.add_argument("--skip-front-matter", action="store_true")
+    parser.add_argument("--include-front-matter", action="store_true")
     parser.add_argument("--clobber", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -166,6 +167,14 @@ def local_book_dir(args: argparse.Namespace, book_id: str) -> Path:
     return root_path(args.local_root) / book_id
 
 
+def should_skip_front_matter(args: argparse.Namespace) -> bool:
+    if args.skip_front_matter and args.include_front_matter:
+        raise SystemExit("choose either --skip-front-matter or --include-front-matter")
+    return args.skip_front_matter or (
+        not args.include_front_matter and args.start_line is None
+    )
+
+
 def build_local_manifest(
     builder: ModuleType,
     args: argparse.Namespace,
@@ -175,20 +184,13 @@ def build_local_manifest(
     book_id = str(book["id"])
     out_dir = local_book_dir(args, book_id)
     out_rel = Path(os.path.relpath(out_dir, repo_root()))
-    try:
-        excerpt = builder.read_excerpt(
-            text_path,
-            args.max_chars,
-            args.start_line,
-            args.skip_front_matter,
-        )
-    except SystemExit as exc:
-        if args.start_line is not None or str(exc) != (
-            "could not find an introduction/prologue/chapter body heading"
-        ):
-            raise
-        print(f"front matter heading not found for {book_id}; using beginning")
-        excerpt = builder.read_excerpt(text_path, args.max_chars, None, False)
+    skip_front_matter = should_skip_front_matter(args)
+    excerpt = builder.read_excerpt(
+        text_path,
+        args.max_chars,
+        args.start_line,
+        skip_front_matter,
+    )
     segments = builder.rough_segments(builder.split_segments(excerpt))
     manifest = {
         "id": book_id,
@@ -199,6 +201,10 @@ def build_local_manifest(
         "localOnly": True,
         "cover": (out_rel / "cover.svg").as_posix(),
         "durationSec": segments[-1]["endSec"],
+        "textProcessing": {
+            "frontMatter": "skipped" if skip_front_matter else "included",
+            "segmentUnit": "paragraph",
+        },
         "segments": segments,
     }
     cover = builder.cover_svg(manifest["title"], manifest["author"])
@@ -339,11 +345,7 @@ def mark_generation(
     segments = manifest.get("segments") or []
     manifest["generation"] = {
         "bookId": book_id,
-        "fullBook": (
-            args.max_chars == 0
-            and args.start_line is None
-            and not args.skip_front_matter
-        ),
+        "fullBook": args.max_chars == 0 and args.start_line is None,
         "segmentCount": len(segments),
         "textChars": sum(
             len(str(segment.get("text", "")))
