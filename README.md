@@ -14,10 +14,16 @@ Open `http://localhost:8000/field-notes-819a/` from this directory.
 
 Use `scripts/serve-local.py` instead of `python3 -m http.server` for local audiobook testing. It supports byte-range requests, which browsers need for seeking inside `media/sample.m4a`.
 
-The local server serves static files from disk. The page tries `releaseAudio.url` first when the manifest has one, then falls back to `audio`. If the page still plays old audio, update or remove `releaseAudio.url`; for local fallback audio, regenerate or replace the file named by `audio` in `data/small-walk.json`:
+The local server serves static files from disk. The page plays `audioChunks` when present, otherwise tries `releaseAudio.url`, then falls back to `audio`. If the page still plays old single-file audio, update or remove `releaseAudio.url`; for local fallback audio, regenerate or replace the file named by `audio` in `data/small-walk.json`:
 
 ```sh
 uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest data/small-walk.json --out media/sample.m4a --confirm-rights --rough-timings
+```
+
+Generate ignored owned-book audio as page-sized chunks instead of one long file:
+
+```sh
+uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/<book>/manifest.json --chunk-dir local/owned-books/<book>/chunks --confirm-local-owned-use --rough-timings
 ```
 
 Ignored local manifests can be opened without adding them to the public catalog:
@@ -54,7 +60,7 @@ scripts/publish-release-audio.sh --confirm-rights -R OWNER/REPO audio-small-walk
 
 The release script requires `origin` to match `OWNER/REPO` before a real upload. Add `--clobber` only when replacing an existing release asset is intended.
 
-The Pages UI tries `releaseAudio.url` first when present and falls back to `audio` if the release asset cannot be loaded. The GitHub Pages workflow is in `.github/workflows/pages.yml`.
+The Pages UI plays `audioChunks` when present. Without chunks, it tries `releaseAudio.url` first and falls back to `audio` if the release asset cannot be loaded. The GitHub Pages workflow is in `.github/workflows/pages.yml`.
 
 The `-10` and `+10` buttons seek by seconds. Use the Speed menu to change playback tempo in the browser without regenerating audio.
 
@@ -90,6 +96,7 @@ The reader saves per-book playback position in browser `localStorage`.
 `data/books.json` points to one or more book manifests. Each manifest contains:
 
 - `audio`: relative path to pre-generated audio
+- `audioChunks`: optional ordered chunked-audio refs, each with `path`, `startSec`, and `endSec`
 - `releaseAudio.url`: optional GitHub release asset URL preferred by the UI
 - `cover`: relative path to cover art
 - `segments`: ordered text spans with `startSec` and `endSec`, for small books

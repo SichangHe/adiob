@@ -48,6 +48,10 @@ voice and publication workflow
     - 🤖 pass `--skip-front-matter` when extracted text starts with publication metadata or a table of contents
   - generate local-only audio
     - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/<book>/manifest.json --out local/owned-books/<book>/demo.m4a --confirm-local-owned-use --rough-timings`
+  - generate local-only chunked audio
+    - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/<book>/manifest.json --chunk-dir local/owned-books/<book>/chunks --confirm-local-owned-use --rough-timings`
+    - use `--chunk-segments 48` by default
+    - use `--max-chunks N --manifest-out local/owned-books/<book>-slice/manifest.json --chunk-dir local/owned-books/<book>-slice/chunks` for a validation slice
   - `--rough-timings` preserves manifest segment boundaries during TTS
   - open the local demo
     - `http://127.0.0.1:8000/field-notes-819a/?manifest=local/owned-books/<book>/manifest.json`
@@ -73,6 +77,11 @@ voice and publication workflow
   - the workflow copies static files into `_site`, uploads the Pages artifact, and deploys it
   - after the release script updates `releaseAudio.url`, commit and push `main`
 - static data contract
+  - `audioChunks` is preferred when present
+  - each audio chunk has `path`, `startSec`, and `endSec`
+  - chunk `path` is relative to the manifest file
+  - chunk timing is global book time, not local blob time
+  - browser speech fallback remains for manifests with transcript pages and no generated audio
   - `audio` remains the local fallback when `releaseAudio.url` is absent or cannot be loaded
   - `releaseAudio.url` is tried first by the browser when present
   - the UI also shows a direct link to the release asset

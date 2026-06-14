@@ -41,7 +41,8 @@ def maybe_under(path: Path, parent: Path) -> bool:
 
 def require_publishable_manifest(path: Path, manifest: dict[str, Any]) -> None:
     root = repo_root()
-    for private in (root / "local", root / "owned-text"):
+    private_roots = (root / "local", root / "owned-text")
+    for private in private_roots:
         if maybe_under(path, private):
             name = private.relative_to(root).as_posix()
             raise SystemExit(f"refusing to update a manifest under ignored `{name}/`")
@@ -51,13 +52,37 @@ def require_publishable_manifest(path: Path, manifest: dict[str, Any]) -> None:
     if isinstance(audio, str):
         audio_path = Path(audio)
         resolved_audio = audio_path if audio_path.is_absolute() else root / audio_path
-        for private in (root / "local", root / "owned-text"):
+        for private in private_roots:
             if not maybe_under(resolved_audio, private):
                 continue
             name = private.relative_to(root).as_posix()
             raise SystemExit(
                 f"refusing to update a manifest whose `audio` is under ignored `{name}/`"
             )
+    audio_chunks = manifest.get("audioChunks")
+    if isinstance(audio_chunks, list):
+        manifest_dir = lexical_path(path).parent
+        for chunk in audio_chunks:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_path = chunk.get("path")
+            if not isinstance(chunk_path, str):
+                continue
+            raw_path = Path(chunk_path)
+            candidates = (
+                (raw_path,)
+                if raw_path.is_absolute()
+                else (manifest_dir / raw_path, root / raw_path)
+            )
+            for candidate in candidates:
+                for private in private_roots:
+                    if not maybe_under(candidate, private):
+                        continue
+                    name = private.relative_to(root).as_posix()
+                    raise SystemExit(
+                        "refusing to update a manifest whose `audioChunks` "
+                        f"reference ignored `{name}/`"
+                    )
 
 
 def main() -> None:

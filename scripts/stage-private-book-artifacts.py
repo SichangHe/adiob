@@ -16,6 +16,7 @@ from typing import Any
 DEFAULT_ARTIFACT_SUBDIR = "archive-cache-a17"
 DEFAULT_SEGMENT_PAGE_SIZE = 48
 DEFAULT_TEXT_PAGE_CHARS = 12000
+CHUNK_TIMING_TOLERANCE_SEC = 0.05
 ROUGH_CHARS_PER_SEC = 13.0
 SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[\"'A-Z])")
 BODY_HEADING = re.compile(
@@ -118,6 +119,29 @@ def copy_file(source: Path, target: Path) -> None:
     shutil.copyfile(source, target)
 
 
+def safe_relative_file(base: Path, value: Any, label: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"{label} is missing a relative file path")
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise SystemExit(f"{label} must be a relative file path")
+    resolved = (base / path).resolve(strict=False)
+    if not resolved.is_relative_to(base.resolve(strict=False)):
+        raise SystemExit(f"{label} escapes its artifact directory")
+    return path
+
+
+def safe_artifact_subdir(site_root: Path, value: str) -> str:
+    path = Path(value)
+    if not value or path.is_absolute() or "." in path.parts or ".." in path.parts:
+        raise SystemExit("artifact subdir must be a safe relative directory")
+    target = (site_root / path).resolve(strict=False)
+    root = site_root.resolve(strict=False)
+    if target == root or not target.is_relative_to(root):
+        raise SystemExit("artifact subdir must stay under site root")
+    return path.as_posix()
+
+
 def split_chunks(items: list[Any], chunk_size: int) -> list[list[Any]]:
     if chunk_size < 1:
         raise SystemExit("chunk size must be at least 1")
@@ -171,14 +195,11 @@ def stage_book(
     book_id = safe_id(book["id"])
     target_dir = site_root / artifact_subdir / book_id
     generated = book.get("generated")
-    if isinstance(generated, dict):
-        public_manifest = stage_generated_book(
-            private_root, target_dir, book_id, book, generated, segment_page_size
-        )
-    else:
-        public_manifest = stage_text_book(
-            private_root, target_dir, book_id, book, text_page_chars
-        )
+    if not isinstance(generated, dict):
+        raise SystemExit(f"published private catalog entry must set generated: {book_id}")
+    public_manifest = stage_generated_book(
+        private_root, target_dir, book_id, book, generated, segment_page_size
+    )
     write_json(target_dir / "manifest.json", public_manifest)
     return {
         "id": book_id,
@@ -202,11 +223,17 @@ def stage_generated_book(
     source_manifest = private_root / require_generated_path(
         book_id, generated, "manifest", "manifest.json"
     )
-    source_audio = private_root / require_generated_path(
-        book_id, generated, "audio", "demo.m4a"
-    )
-    copy_file(source_audio, target_dir / "demo.m4a")
     manifest = read_json(source_manifest)
+    audio_chunks = public_audio_chunks_from(
+        book_id, source_manifest.parent, target_dir, manifest
+    )
+    audio = None
+    if not audio_chunks:
+        source_audio = private_root / require_generated_path(
+            book_id, generated, "audio", "demo.m4a"
+        )
+        copy_file(source_audio, target_dir / "demo.m4a")
+        audio = "demo.m4a"
     write_text(
         target_dir / "cover.svg",
         cover_svg(
@@ -222,9 +249,14 @@ def stage_generated_book(
         book,
         manifest,
         refs,
-        audio="demo.m4a",
+        audio=audio,
+        audio_chunks=audio_chunks,
         cover="cover.svg",
-        timing="generated audio segment timing",
+        timing=(
+            "generated chunk audio segment timing"
+            if audio_chunks
+            else "generated audio segment timing"
+        ),
     )
 
 
@@ -268,6 +300,46 @@ def public_segments_from(book_id: str, manifest: dict[str, Any]) -> list[dict[st
             }
         )
     return public_segments
+
+
+def public_audio_chunks_from(
+    book_id: str, source_dir: Path, target_dir: Path, manifest: dict[str, Any]
+) -> list[dict[str, Any]]:
+    chunks = manifest.get("audioChunks")
+    if chunks is None:
+        return []
+    if not isinstance(chunks, list) or not chunks:
+        raise SystemExit(f"manifest audioChunks must be a non-empty list: {book_id}")
+    public_chunks = []
+    previous_end_sec = 0.0
+    for index, chunk in enumerate(chunks, start=1):
+        if not isinstance(chunk, dict):
+            raise SystemExit(f"manifest audio chunk is not an object: {book_id}")
+        path = safe_relative_file(
+            source_dir, chunk.get("path"), f"{book_id} audio chunk"
+        )
+        source = source_dir / path
+        copy_file(source, target_dir / path)
+        start_sec = float(chunk["startSec"])
+        end_sec = float(chunk["endSec"])
+        if (
+            abs(start_sec - previous_end_sec) > CHUNK_TIMING_TOLERANCE_SEC
+            or end_sec <= start_sec
+        ):
+            raise SystemExit(f"manifest audio chunk timing is invalid: {book_id}")
+        public_chunks.append(
+            {
+                "id": str(chunk.get("id") or f"chunk-{index:03d}"),
+                "path": path.as_posix(),
+                "startSec": start_sec,
+                "endSec": end_sec,
+                "durationSec": round(end_sec - start_sec, 3),
+                "segmentStart": int(chunk.get("segmentStart", 0)),
+                "segmentCount": int(chunk.get("segmentCount", 0)),
+            }
+        )
+        previous_end_sec = end_sec
+    return public_chunks
 
 
 def segment_page_title(segments: list[dict[str, Any]], index: int) -> str:
@@ -422,7 +494,14 @@ def public_manifest_from(
     audio: str | None,
     cover: str,
     timing: str,
+    audio_chunks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    page_duration_sec = float(page_refs[-1]["endSec"])
+    duration_sec = page_duration_sec
+    if audio_chunks:
+        duration_sec = float(audio_chunks[-1]["endSec"])
+        if abs(duration_sec - page_duration_sec) > CHUNK_TIMING_TOLERANCE_SEC:
+            raise SystemExit("audio chunk timing does not match segment timing")
     public_manifest = {
         "id": str(manifest.get("id") or f"{book_id}-reader"),
         "title": str(book.get("title") or manifest.get("title") or book_id),
@@ -431,7 +510,7 @@ def public_manifest_from(
         "license": "",
         "privateArtifactWorkflow": True,
         "cover": cover,
-        "durationSec": round(float(page_refs[-1]["endSec"]), 3),
+        "durationSec": round(duration_sec, 3),
         "segmentCount": sum(ref["count"] for ref in page_refs),
         "pageCount": len(page_refs),
         "pages": page_refs,
@@ -439,6 +518,8 @@ def public_manifest_from(
     }
     if audio is not None:
         public_manifest["audio"] = audio
+    if audio_chunks:
+        public_manifest["audioChunks"] = audio_chunks
     return public_manifest
 
 
@@ -446,6 +527,7 @@ def main() -> None:
     args = parse_args()
     private_root = args.private_root.resolve(strict=False)
     site_root = args.site_root.resolve(strict=True)
+    artifact_subdir = safe_artifact_subdir(site_root, args.artifact_subdir)
     public_catalog_path = site_root / "data" / "books.json"
     public_catalog = read_json(public_catalog_path)
     books = public_catalog.get("books")
@@ -456,14 +538,19 @@ def main() -> None:
     staged_private_entries = []
     staged_audio_entries = []
     if private_catalog_path.is_file():
+        artifact_root = site_root / artifact_subdir
+        if artifact_root.exists():
+            shutil.rmtree(artifact_root)
         private_catalog = read_json(private_catalog_path)
         for book in private_catalog.get("books", []):
+            if book.get("publish") is not True:
+                continue
             entry = stage_book(
                 private_root,
                 site_root,
                 book,
                 args.reader_path,
-                args.artifact_subdir,
+                artifact_subdir,
                 args.segment_page_size,
                 args.text_page_chars,
             )

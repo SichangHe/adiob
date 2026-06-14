@@ -14,6 +14,10 @@ local owned-book demo
     - `python3 scripts/build-local-owned-demo.py --text owned-text/<book>.txt --out-dir local/owned-books/<book> --id <book>-local --title '<title>' --author '<author>' --skip-front-matter --max-chars 30000 --confirm-local-owned-use`
   - generate ignored audio and rough timings
     - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/<book>/manifest.json --out local/owned-books/<book>/demo.m4a --confirm-local-owned-use --rough-timings`
+  - generate ignored chunked audio and rough timings
+    - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/<book>/manifest.json --chunk-dir local/owned-books/<book>/chunks --confirm-local-owned-use --rough-timings`
+    - chunk paths in `audioChunks` are relative to the manifest
+    - the reader treats chunks as one continuous book timeline
   - serve local reader
     - `python3 scripts/serve-local.py 8000 --directory .`
   - open local demo
@@ -33,4 +37,5 @@ local owned-book demo
   - write extracted text to `owned-text/<book>.txt`
   - run `scripts/build-local-owned-demo.py` with a different `--text`, `--out-dir`, `--id`, `--title`, and `--author`
   - generate audio with `--confirm-local-owned-use`
+  - use `--chunk-dir local/owned-books/<book>/chunks` for full-book Kokoro generation
   - keep the result out of release upload and Pages publishing

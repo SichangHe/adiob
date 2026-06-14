@@ -27,6 +27,7 @@ const MAX_RATE = 2;
 const DEFAULT_RATE = 1;
 const SEEK_STEP_SEC = 10;
 const VOLUME_STEP = 0.1;
+const AUDIO_CHUNK_TOLERANCE_SEC = 0.05;
 
 let book = null;
 let catalog = null;
@@ -39,6 +40,8 @@ let restoringProgress = false;
 let renderSeq = 0;
 let pageSeq = 0;
 let pageLoad = null;
+let activeAudioChunkIndex = -1;
+let resumeAudioAfterLoad = false;
 let speechUtterance = null;
 let speechProgressTimer = null;
 let speechPlaying = false;
@@ -246,6 +249,44 @@ function normalizePages(nextBook) {
   return { error: "manifest has no page data" };
 }
 
+function normalizeAudioChunks(rawChunks) {
+  if (rawChunks === undefined) {
+    return { value: [] };
+  }
+  if (!Array.isArray(rawChunks) || !rawChunks.length) {
+    return { error: "manifest audioChunks must be a non-empty list" };
+  }
+  const chunks = [];
+  let previousEndSec = 0;
+  for (const [index, chunk] of rawChunks.entries()) {
+    if (!chunk || typeof chunk !== "object") {
+      return { error: "manifest audio chunk is not an object" };
+    }
+    const path = typeof chunk.path === "string" ? chunk.path : "";
+    const startSec = Number(chunk.startSec);
+    const endSec = Number(chunk.endSec);
+    if (!path) {
+      return { error: "manifest audio chunk is missing path" };
+    }
+    if (
+      !Number.isFinite(startSec) ||
+      !Number.isFinite(endSec) ||
+      Math.abs(startSec - previousEndSec) > AUDIO_CHUNK_TOLERANCE_SEC ||
+      endSec <= startSec
+    ) {
+      return { error: "manifest audio chunk has invalid timing" };
+    }
+    chunks.push({
+      id: String(chunk.id ?? `chunk-${String(index + 1).padStart(3, "0")}`),
+      path,
+      startSec,
+      endSec,
+    });
+    previousEndSec = endSec;
+  }
+  return { value: chunks };
+}
+
 async function loadPageSegments(page, manifestPath) {
   if (Array.isArray(page.segments)) {
     return normalizeSegments(page.segments);
@@ -351,6 +392,7 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
   pageSeq += 1;
   pageLoad = null;
   const pageResult = normalizePages(nextBook);
+  const chunkResult = normalizeAudioChunks(nextBook.audioChunks);
   if (renderId !== renderSeq || manifestPath !== currentManifest) {
     return;
   }
@@ -358,9 +400,22 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
     renderError(pageResult.error);
     return;
   }
-  book = { ...nextBook, pages: pageResult.value };
+  const audioChunks = chunkResult.error ? [] : chunkResult.value;
+  const manifestDurationSec = Number(nextBook.durationSec);
+  const inferredDurationSec =
+    audioChunks.at(-1)?.endSec ?? pageResult.value.at(-1)?.endSec ?? 0;
+  book = {
+    ...nextBook,
+    pages: pageResult.value,
+    audioChunks,
+    durationSec: Number.isFinite(manifestDurationSec)
+      ? manifestDurationSec
+      : inferredDurationSec,
+  };
   activePage = null;
   activePageIndex = 0;
+  activeAudioChunkIndex = -1;
+  resumeAudioAfterLoad = false;
   const restoredSec = Math.min(savedProgressSec(book), Number(book.durationSec) || 0);
   restoringProgress = restoredSec > 0;
   pendingSeekSec = restoredSec > 0 ? restoredSec : null;
@@ -373,7 +428,9 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
   cover.src = assetPath(book.cover, manifestPath);
   cover.alt = `${book.title} cover`;
   audio.dataset.releaseFallbackUsed = "0";
-  if (hasAudio()) {
+  if (hasChunkedAudio()) {
+    loadAudioChunk(audioChunkIndexAt(restoredSec));
+  } else if (hasAudio()) {
     audio.src = assetPath(book.releaseAudio?.url || book.audio, manifestPath);
     audio.load();
   } else {
@@ -401,8 +458,16 @@ function renderReleaseAudio(track, manifestPath) {
   releaseAudio.textContent = track.asset ? `Release audio: ${track.asset}` : "Release audio";
 }
 
-function hasAudio() {
+function hasChunkedAudio() {
+  return Boolean(book?.audioChunks?.length);
+}
+
+function hasFallbackAudio() {
   return Boolean(book && (book.releaseAudio?.url || book.audio));
+}
+
+function hasAudio() {
+  return Boolean(book && (hasChunkedAudio() || hasFallbackAudio()));
 }
 
 function hasSpeech() {
@@ -419,6 +484,112 @@ function setAudioControls() {
   if (disabled) {
     setPlaying(false);
   }
+}
+
+function audioChunkIndexAt(valueSec) {
+  const chunks = book?.audioChunks ?? [];
+  if (!chunks.length) {
+    return -1;
+  }
+  const index = chunks.findIndex(
+    (chunk) =>
+      valueSec >= chunk.startSec - AUDIO_CHUNK_TOLERANCE_SEC &&
+      valueSec < chunk.endSec + AUDIO_CHUNK_TOLERANCE_SEC,
+  );
+  if (index >= 0) {
+    return index;
+  }
+  return valueSec >= chunks.at(-1).endSec ? chunks.length - 1 : 0;
+}
+
+function activeAudioChunk() {
+  if (!hasChunkedAudio() || activeAudioChunkIndex < 0) {
+    return null;
+  }
+  return book.audioChunks[activeAudioChunkIndex] ?? null;
+}
+
+function audioGlobalTime() {
+  const chunk = activeAudioChunk();
+  if (chunk) {
+    return Math.min(chunk.endSec, chunk.startSec + audio.currentTime);
+  }
+  return audio.currentTime;
+}
+
+function loadAudioChunk(index, playAfterLoad = false) {
+  const chunks = book?.audioChunks ?? [];
+  if (!chunks.length) {
+    return false;
+  }
+  const nextIndex = Math.min(Math.max(0, index), chunks.length - 1);
+  const chunk = chunks[nextIndex];
+  const nextSrc = assetPath(chunk.path);
+  resumeAudioAfterLoad = playAfterLoad;
+  if (activeAudioChunkIndex === nextIndex && audio.getAttribute("src") === nextSrc) {
+    if (playAfterLoad && audio.readyState >= 1) {
+      void audio.play();
+    }
+    return true;
+  }
+  activeAudioChunkIndex = nextIndex;
+  audio.src = nextSrc;
+  audio.load();
+  return true;
+}
+
+function applyPendingAudioSeek(maxSec = maxPlaybackSec()) {
+  if (pendingSeekSec === null || !hasAudio() || audio.readyState < 1) {
+    return false;
+  }
+  const targetSec = Math.min(Math.max(0, pendingSeekSec), maxSec);
+  const chunk = activeAudioChunk();
+  if (chunk && (targetSec < chunk.startSec || targetSec > chunk.endSec)) {
+    return false;
+  }
+  const targetAudioSec = chunk ? targetSec - chunk.startSec : targetSec;
+  try {
+    audio.currentTime = Math.max(0, targetAudioSec);
+    pendingSeekSec = null;
+    restoringProgress = false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function currentPlaybackSec() {
+  const scrubSec = Number(scrub.value);
+  if (pendingSeekSec !== null) {
+    return pendingSeekSec;
+  }
+  if (hasAudio() && audio.readyState >= 1 && Number.isFinite(audio.currentTime)) {
+    return audioGlobalTime();
+  }
+  return Number.isFinite(scrubSec) ? scrubSec : 0;
+}
+
+function fallbackFromChunkError() {
+  if (!hasChunkedAudio()) {
+    return false;
+  }
+  const targetSec = currentPlaybackSec();
+  book.audioChunks = [];
+  activeAudioChunkIndex = -1;
+  resumeAudioAfterLoad = false;
+  pendingSeekSec = targetSec;
+  if (hasFallbackAudio()) {
+    audio.src = assetPath(book.releaseAudio?.url || book.audio);
+    audio.load();
+  } else {
+    audio.removeAttribute("src");
+    audio.load();
+    pendingSeekSec = null;
+    updateProgress(targetSec);
+  }
+  setPlaying(false);
+  setAudioControls();
+  return true;
 }
 
 function stopSpeech(updateButton = true) {
@@ -698,6 +869,11 @@ function updateProgress(valueSec) {
 }
 
 function maxPlaybackSec() {
+  if (hasChunkedAudio()) {
+    return Number.isFinite(book?.durationSec)
+      ? book.durationSec
+      : book.audioChunks.at(-1).endSec;
+  }
   if (hasAudio() && Number.isFinite(audio.duration) && audio.duration > 0) {
     return audio.duration;
   }
@@ -716,7 +892,16 @@ function seekTo(valueSec) {
   }
   pendingSeekSec = targetSec;
   void ensurePageForTime(targetSec);
-  if (hasAudio() && audio.readyState >= 1) {
+  if (hasChunkedAudio()) {
+    const chunkIndex = audioChunkIndexAt(targetSec);
+    const wasPlaying = !audio.paused;
+    if (chunkIndex !== activeAudioChunkIndex) {
+      loadAudioChunk(chunkIndex, wasPlaying);
+    }
+    if (audio.readyState >= 1) {
+      applyPendingAudioSeek();
+    }
+  } else if (hasAudio() && audio.readyState >= 1) {
     try {
       audio.currentTime = targetSec;
       if (!isRestoring || targetSec <= 0) {
@@ -738,15 +923,7 @@ function seekTo(valueSec) {
 }
 
 function seekBy(deltaSec) {
-  const scrubSec = Number(scrub.value);
-  const currentSec =
-    pendingSeekSec ??
-    (hasAudio() && audio.readyState >= 1 && Number.isFinite(audio.currentTime)
-      ? audio.currentTime
-      : Number.isFinite(scrubSec)
-        ? scrubSec
-        : 0);
-  seekTo(currentSec + deltaSec);
+  seekTo(currentPlaybackSec() + deltaSec);
 }
 
 function setPlaying(isPlaying) {
@@ -926,11 +1103,22 @@ audio.addEventListener("loadedmetadata", () => {
   scrub.max = String(maxSec);
   duration.textContent = fmtTime(maxSec);
   if (pendingSeekSec !== null) {
-    const targetSec = Math.min(Math.max(0, pendingSeekSec), maxSec);
-    seekTo(targetSec);
+    if (hasChunkedAudio()) {
+      applyPendingAudioSeek(maxSec);
+    } else {
+      const targetSec = Math.min(Math.max(0, pendingSeekSec), maxSec);
+      seekTo(targetSec);
+    }
+  }
+  if (resumeAudioAfterLoad) {
+    resumeAudioAfterLoad = false;
+    void audio.play();
   }
 });
 audio.addEventListener("error", () => {
+  if (fallbackFromChunkError()) {
+    return;
+  }
   if (!book?.releaseAudio?.url || !book.audio || audio.dataset.releaseFallbackUsed === "1") {
     return;
   }
@@ -939,17 +1127,36 @@ audio.addEventListener("error", () => {
   audio.load();
 });
 audio.addEventListener("timeupdate", () => {
-  void ensurePageForTime(audio.currentTime);
-  updateProgress(audio.currentTime);
-  if (restoringProgress && audio.currentTime > 0) {
+  const valueSec = audioGlobalTime();
+  void ensurePageForTime(valueSec);
+  updateProgress(valueSec);
+  if (restoringProgress && valueSec > 0) {
     restoringProgress = false;
     pendingSeekSec = null;
   }
-  saveProgressSec(audio.currentTime);
+  saveProgressSec(valueSec);
 });
 audio.addEventListener("play", () => setPlaying(true));
 audio.addEventListener("pause", () => setPlaying(false));
 audio.addEventListener("ended", async () => {
+  if (hasChunkedAudio()) {
+    const nextIndex = activeAudioChunkIndex + 1;
+    if (nextIndex >= book.audioChunks.length) {
+      setPlaying(false);
+      return;
+    }
+    const nextBook = book;
+    const targetSec = nextBook.audioChunks[nextIndex].startSec;
+    pendingSeekSec = targetSec;
+    await ensurePageForTime(targetSec);
+    if (book !== nextBook) {
+      return;
+    }
+    loadAudioChunk(nextIndex, true);
+    updateProgress(targetSec);
+    saveProgressSec(targetSec, true);
+    return;
+  }
   if (!book?.pages?.length || activePageIndex >= book.pages.length - 1) {
     setPlaying(false);
     return;

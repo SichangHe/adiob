@@ -111,6 +111,15 @@ def private_root(path: Path) -> str | None:
     return None
 
 
+def private_manifest_ref(path: Path, base: Path) -> str | None:
+    candidates = [path] if path.is_absolute() else [base / path, root / path]
+    for candidate in candidates:
+        private = private_root(candidate)
+        if private:
+            return private
+    return None
+
+
 private = private_root(manifest_path)
 if private:
     die(f"refusing to publish a manifest under ignored `{private}/`")
@@ -123,6 +132,21 @@ if isinstance(audio, str):
     private = private_root(audio_path if audio_path.is_absolute() else root / audio_path)
     if private:
         die(f"refusing to publish a manifest whose `audio` is under ignored `{private}/`")
+audio_chunks = manifest.get("audioChunks")
+if isinstance(audio_chunks, list):
+    manifest_dir = lexical(manifest_path).parent
+    for chunk in audio_chunks:
+        if not isinstance(chunk, dict):
+            continue
+        path = chunk.get("path")
+        if not isinstance(path, str):
+            continue
+        private = private_manifest_ref(Path(path), manifest_dir)
+        if private:
+            die(
+                "refusing to publish a manifest whose `audioChunks` "
+                f"reference ignored `{private}/`"
+            )
 for audio_file in audio_files:
     private = private_root(audio_file)
     if private:

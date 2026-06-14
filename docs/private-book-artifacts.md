@@ -15,6 +15,10 @@ private book artifacts
     - demo manifest for books intentionally selected for publication
   - `generated/<book>/demo.m4a`
     - demo audio for selected books
+    - optional when manifest has `audioChunks`
+  - `generated/<book>/chunks/chunk-*.m4a`
+    - chunked Kokoro audio for selected books
+    - referenced by manifest-relative `audioChunks[].path`
   - `generated/<book>/cover.svg`
     - demo cover for selected books
 - export local top-level English files
@@ -38,8 +42,9 @@ private book artifacts
 - Pages staging
   - copies only generated artifacts from private catalog entries with `publish: true`
   - does not copy `texts/`
-  - rewrites staged manifests to local audio, cover, and segment chunk paths
-  - writes transcript text into per-book `chunks/segments-*.json`
+  - rewrites staged manifests to local audio, chunked audio, cover, and page paths
+  - writes transcript text into per-book `pages/page-*.json`
+  - copies `audioChunks` only from paths under `generated/<book>/`
   - writes selected private entries into `_site/field-notes-819a/catalog.json`
 - reader path
   - `field-notes-819a/`
