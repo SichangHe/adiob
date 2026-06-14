@@ -26,13 +26,13 @@ jobs:
       - name: fetch private book artifacts
         env:
           PRIVATE_BOOK_ARTIFACT_REPO: SichangHe/adiob-private-artifacts
-          PRIVATE_BOOK_ARTIFACT_REF: 2fa5b46f6a4b4d250d8c1d3392d2196ac621255a
+          PRIVATE_BOOK_ARTIFACT_REF: 61d846ffd9b5382ef6ed362d419e556ffcba0427
           PRIVATE_BOOK_ARTIFACTS_TOKEN: ${{ secrets.PRIVATE_BOOK_ARTIFACTS_TOKEN }}
         run: scripts/fetch-private-book-artifacts.sh _private-books
       - name: prepare static site
         run: |
           mkdir _site
-          cp -R index.html field-notes-819a ASSET-LICENSE.md LICENSE README.md data docs media src _site/
+          cp -R index.html field-notes-819a ASSET-LICENSE.md LICENSE data media src _site/
           python3 scripts/stage-private-book-artifacts.py --private-root _private-books --site-root _site --reader-path field-notes-819a
       - name: setup pages
         uses: actions/configure-pages@v5

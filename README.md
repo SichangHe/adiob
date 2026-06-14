@@ -23,7 +23,7 @@ uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py 
 Ignored local manifests can be opened without adding them to the public catalog:
 
 ```sh
-python3 scripts/build-local-owned-demo.py --confirm-local-owned-use
+python3 scripts/build-local-owned-demo.py --skip-front-matter --max-chars 30000 --confirm-local-owned-use
 uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/the-contrarian/manifest.json --out local/owned-books/the-contrarian/demo.m4a --confirm-local-owned-use --rough-timings
 python3 scripts/serve-local.py 8000
 ```

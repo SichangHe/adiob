@@ -21,6 +21,10 @@ DEFAULT_TITLE = (
 DEFAULT_AUTHOR = "Max Chafkin"
 DEFAULT_MAX_CHARS = 0
 SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[\"'A-Z])")
+BODY_HEADING = re.compile(
+    r"^(introduction|introductory|prologue|chapter\b|chapter\s+[ivxlcdm0-9]+)\b",
+    re.IGNORECASE,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +41,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_MAX_CHARS,
         help="Maximum source characters to include; 0 includes the whole text.",
+    )
+    parser.add_argument(
+        "--start-line",
+        type=int,
+        help="1-based source line where manifest text starts.",
+    )
+    parser.add_argument(
+        "--skip-front-matter",
+        action="store_true",
+        help="Start at the first introduction/prologue/chapter body heading.",
     )
     parser.add_argument("--audio-name", default="demo.m4a")
     parser.add_argument(
@@ -107,20 +121,56 @@ def write_local_file(path: Path, text: str) -> None:
     os.replace(tmp_path, path)
 
 
-def read_excerpt(path: Path, max_chars: int) -> str:
+def normalized_source_lines(path: Path) -> list[tuple[int, str]]:
+    with path.open(encoding="utf-8") as source:
+        return [
+            (line_number, text)
+            for line_number, line in enumerate(source, start=1)
+            if (text := normalize_space(line))
+        ]
+
+
+def body_heading_index(lines: list[tuple[int, str]]) -> int | None:
+    for index, (_, line) in enumerate(lines):
+        if not BODY_HEADING.search(line):
+            continue
+        following = [text for _, text in lines[index + 1 : index + 16]]
+        if sum(len(text) >= 40 for text in following) >= 8:
+            return index
+    return None
+
+
+def start_index(
+    lines: list[tuple[int, str]], start_line: int | None, skip_front_matter: bool
+) -> int:
+    if start_line is not None:
+        if start_line < 1:
+            raise SystemExit("--start-line must be at least 1")
+        for index, (line_number, _) in enumerate(lines):
+            if line_number >= start_line:
+                return index
+        raise SystemExit("--start-line is after the end of the source text")
+    if skip_front_matter:
+        index = body_heading_index(lines)
+        if index is None:
+            raise SystemExit("could not find an introduction/prologue/chapter body heading")
+        return index
+    return 0
+
+
+def read_excerpt(
+    path: Path, max_chars: int, start_line: int | None, skip_front_matter: bool
+) -> str:
     if max_chars and max_chars < 600:
         raise SystemExit("--max-chars must be at least 600")
     chunks: list[str] = []
     n_chars = 0
-    with path.open(encoding="utf-8") as source:
-        for line in source:
-            text = normalize_space(line)
-            if not text:
-                continue
-            chunks.append(text)
-            n_chars += len(text) + 1
-            if max_chars and n_chars >= max_chars + 800:
-                break
+    lines = normalized_source_lines(path)
+    for _, text in lines[start_index(lines, start_line, skip_front_matter) :]:
+        chunks.append(text)
+        n_chars += len(text) + 1
+        if max_chars and n_chars >= max_chars + 800:
+            break
     excerpt = normalize_space(" ".join(chunks))
     if not excerpt:
         raise SystemExit("no text found in owned input")
@@ -189,7 +239,16 @@ def build_manifest(
 ) -> dict[str, Any]:
     audio_path = out_dir_rel / args.audio_name
     cover_path = out_dir_rel / "cover.svg"
-    segments = rough_segments(split_segments(read_excerpt(text_path, args.max_chars)))
+    segments = rough_segments(
+        split_segments(
+            read_excerpt(
+                text_path,
+                args.max_chars,
+                args.start_line,
+                args.skip_front_matter,
+            )
+        )
+    )
     return {
         "id": args.id,
         "title": args.title,

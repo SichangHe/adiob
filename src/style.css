@@ -73,6 +73,7 @@ select {
 }
 
 .kicker,
+.build-tag,
 .license,
 .notice,
 #book-author {
@@ -86,6 +87,12 @@ select {
   font-weight: 800;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.build-tag {
+  color: var(--accent-dark);
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
 h1 {

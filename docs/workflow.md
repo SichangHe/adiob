@@ -41,9 +41,10 @@ voice and publication workflow
   - source text stays under ignored `owned-text/`
   - derived manifest, cover, and audio stay under ignored `local/`
   - build the current local demo manifest
-    - `python3 scripts/build-local-owned-demo.py --confirm-local-owned-use`
+    - `python3 scripts/build-local-owned-demo.py --skip-front-matter --max-chars 30000 --confirm-local-owned-use`
   - 🤖 local owned-book manifests include the whole extracted text by default
     - 🤖 pass `--max-chars N` only for a deliberate excerpt
+    - 🤖 pass `--skip-front-matter` when extracted text starts with publication metadata or a table of contents
   - generate local-only audio
     - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/the-contrarian/manifest.json --out local/owned-books/the-contrarian/demo.m4a --confirm-local-owned-use --rough-timings`
   - open the local demo

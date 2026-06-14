@@ -11,7 +11,7 @@ local owned-book demo
   - release tooling refuses `localOnly` manifests and files under private `local/` or `owned-text/` roots
 - current local book
   - build ignored manifest and cover
-    - `python3 scripts/build-local-owned-demo.py --confirm-local-owned-use`
+    - `python3 scripts/build-local-owned-demo.py --skip-front-matter --max-chars 30000 --confirm-local-owned-use`
   - generate ignored audio and rough timings
     - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/the-contrarian/manifest.json --out local/owned-books/the-contrarian/demo.m4a --confirm-local-owned-use --rough-timings`
   - serve local reader

@@ -14,12 +14,22 @@ const title = document.querySelector("#book-title");
 const author = document.querySelector("#book-author");
 const bookSelect = document.querySelector("#book-select");
 const bookPicker = document.querySelector("#book-picker");
+const buildTag = document.querySelector("#build-tag");
 
 let book = null;
 let catalog = null;
 let activeId = "";
 let pendingSeekSec = null;
 let currentManifest = "";
+
+function renderBuildTag() {
+  const build = buildTag?.dataset.build;
+  if (!build) {
+    return;
+  }
+  const isLocal = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+  buildTag.textContent = `${isLocal ? "localhost" : "source"} ${build}`;
+}
 
 async function loadJson(path) {
   const response = await fetch(path);
@@ -115,7 +125,7 @@ function renderBookSelect(books) {
       return option;
     }),
   );
-  bookPicker.hidden = books.length <= 1;
+  bookPicker.hidden = false;
 }
 
 function renderError(message) {
@@ -296,6 +306,7 @@ audio.addEventListener("play", () => setPlaying(true));
 audio.addEventListener("pause", () => setPlaying(false));
 audio.addEventListener("ended", () => setPlaying(false));
 
+renderBuildTag();
 const result = await loadBook();
 if (result.error) {
   renderError(result.error);
