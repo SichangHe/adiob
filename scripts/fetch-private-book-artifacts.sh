@@ -7,8 +7,10 @@ ref="${PRIVATE_BOOK_ARTIFACT_REF:-main}"
 token="${PRIVATE_BOOK_ARTIFACTS_TOKEN:-}"
 
 if [[ -z "$token" ]]; then
-  printf 'PRIVATE_BOOK_ARTIFACTS_TOKEN secret is required to fetch %s\n' "$repo" >&2
-  exit 2
+  printf 'PRIVATE_BOOK_ARTIFACTS_TOKEN is not set; deploying public sample catalog only\n' >&2
+  rm -rf "$target"
+  mkdir -p "$target"
+  exit 0
 fi
 if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
   printf 'PRIVATE_BOOK_ARTIFACT_REPO must look like owner/repo\n' >&2

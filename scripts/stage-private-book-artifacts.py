@@ -177,30 +177,30 @@ def public_manifest_from(
 
 def main() -> None:
     args = parse_args()
-    private_root = args.private_root.resolve(strict=True)
+    private_root = args.private_root.resolve(strict=False)
     site_root = args.site_root.resolve(strict=True)
-    private_catalog_path = private_root / "books.json"
-    if not private_catalog_path.is_file():
-        print("no private book catalog found; staging public catalog only")
-        return
-    private_catalog = read_json(private_catalog_path)
     public_catalog_path = site_root / "data" / "books.json"
     public_catalog = read_json(public_catalog_path)
     books = public_catalog.get("books")
     if not isinstance(books, list):
         raise SystemExit("public catalog must contain a books list")
     by_id = {entry["id"]: entry for entry in books}
-    for book in private_catalog.get("books", []):
-        if not book.get("publish"):
-            continue
-        entry = stage_book(
-            private_root,
-            site_root,
-            book,
-            args.reader_path,
-            args.artifact_subdir,
-        )
-        by_id[entry["id"]] = entry
+    private_catalog_path = private_root / "books.json"
+    if private_catalog_path.is_file():
+        private_catalog = read_json(private_catalog_path)
+        for book in private_catalog.get("books", []):
+            if not book.get("publish"):
+                continue
+            entry = stage_book(
+                private_root,
+                site_root,
+                book,
+                args.reader_path,
+                args.artifact_subdir,
+            )
+            by_id[entry["id"]] = entry
+    else:
+        print("no private book catalog found; staging public catalog only")
     staged_catalog = {
         "defaultBook": public_catalog.get("defaultBook"),
         "books": list(by_id.values()),

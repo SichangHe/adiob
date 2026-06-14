@@ -169,8 +169,8 @@ function renderSegment(segment, index) {
   text.textContent = segment.text;
   button.append(text);
   button.addEventListener("click", () => {
-    audio.currentTime = segment.startSec;
-    audio.play();
+    seekTo(segment.startSec);
+    void audio.play();
   });
   return button;
 }
@@ -226,7 +226,9 @@ function seekTo(valueSec) {
 }
 
 function seekBy(deltaSec) {
-  const currentSec = audio.readyState === 0 ? Number(scrub.value) : audio.currentTime;
+  const scrubSec = Number(scrub.value);
+  const currentSec =
+    audio.readyState === 0 && Number.isFinite(scrubSec) ? scrubSec : audio.currentTime;
   seekTo(currentSec + deltaSec);
 }
 

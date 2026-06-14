@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 SAMPLE_RATE_HZ = 24000
+DEFAULT_MAX_TTS_CHARS = 1800
+MIN_MAX_TTS_CHARS = 400
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,6 +46,12 @@ def parse_args() -> argparse.Namespace:
         "--rough-timings",
         action="store_true",
         help="Update manifest timings by text length after generation.",
+    )
+    parser.add_argument(
+        "--max-tts-chars",
+        type=int,
+        default=DEFAULT_MAX_TTS_CHARS,
+        help="Maximum characters sent to one Kokoro pipeline call.",
     )
     return parser.parse_args()
 
@@ -129,7 +137,38 @@ def require_tools(out: Path) -> None:
         raise SystemExit("ffprobe is required to read generated duration")
 
 
-def write_kokoro_wav(text: str, out: Path, lang: str, voice: str) -> None:
+def split_tts_chunks(text: str, max_chars: int) -> list[str]:
+    if max_chars < MIN_MAX_TTS_CHARS:
+        raise SystemExit(f"--max-tts-chars must be at least {MIN_MAX_TTS_CHARS}")
+    chunks: list[str] = []
+    remaining = text.strip()
+    while remaining:
+        if len(remaining) <= max_chars:
+            chunks.append(remaining)
+            break
+        limit = max_chars + 1
+        cuts = [
+            remaining.rfind("\n\n", 0, limit),
+            remaining.rfind("\n", 0, limit),
+            remaining.rfind(". ", 0, limit) + 1,
+            remaining.rfind("? ", 0, limit) + 1,
+            remaining.rfind("! ", 0, limit) + 1,
+            remaining.rfind(" ", 0, limit),
+        ]
+        cut = max(cut for cut in cuts if cut >= 0)
+        if cut < max_chars // 2:
+            cut = max_chars
+        chunk = remaining[:cut].strip()
+        if not chunk:
+            raise SystemExit("could not split text into TTS chunks")
+        chunks.append(chunk)
+        remaining = remaining[cut:].strip()
+    return chunks
+
+
+def write_kokoro_wav(
+    text: str, out: Path, lang: str, voice: str, max_tts_chars: int
+) -> None:
     try:
         import soundfile as sf
         from kokoro import KPipeline
@@ -140,12 +179,12 @@ def write_kokoro_wav(text: str, out: Path, lang: str, voice: str) -> None:
         ) from exc
 
     pipeline = KPipeline(lang_code=lang, repo_id="hexgrad/Kokoro-82M")
-    generator = pipeline(text, voice=voice)
     wrote_audio = False
     with sf.SoundFile(out, "w", samplerate=SAMPLE_RATE_HZ, channels=1) as wav:
-        for _, _, audio in generator:
-            wav.write(audio)
-            wrote_audio = True
+        for chunk in split_tts_chunks(text, max_tts_chars):
+            for _, _, audio in pipeline(chunk, voice=voice):
+                wav.write(audio)
+                wrote_audio = True
     if not wrote_audio:
         raise SystemExit("kokoro produced no audio")
 
@@ -250,7 +289,7 @@ def main() -> None:
     require_tools(audio_out)
     with tempfile.TemporaryDirectory(prefix="adiob-kokoro-") as tmp:
         wav = Path(tmp) / "audio.wav"
-        write_kokoro_wav(text, wav, args.lang, args.voice)
+        write_kokoro_wav(text, wav, args.lang, args.voice, args.max_tts_chars)
         encode_audio(wav, audio_out)
     duration_sec = probe_duration_sec(audio_out)
     if args.rough_timings:

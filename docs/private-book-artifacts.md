@@ -26,6 +26,15 @@ private book artifacts
     - `SichangHe/adiob-private-artifacts`
   - fetch target
     - `_private-books`
+  - 🤖 if the secret is missing
+    - 🤖 the workflow deploys the public sample catalog only
+    - 🤖 private generated demos are skipped
+  - 🤖 minimal token setup
+    - 🤖 create a fine-grained personal access token
+    - 🤖 repository access is only `SichangHe/adiob-private-artifacts`
+    - 🤖 repository permission is `Contents: read-only`
+    - 🤖 store it as the public repo Actions secret `PRIVATE_BOOK_ARTIFACTS_TOKEN`
+    - 🤖 cli form is `gh secret set PRIVATE_BOOK_ARTIFACTS_TOKEN -R SichangHe/adiob`
 - Pages staging
   - copies only generated artifacts from private catalog entries with `publish: true`
   - does not copy `texts/`

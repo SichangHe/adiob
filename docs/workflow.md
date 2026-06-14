@@ -23,6 +23,9 @@ voice and publication workflow
   - command
     - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest data/small-walk.json --out media/sample.m4a --confirm-rights --rough-timings`
   - `--confirm-rights` is the explicit gate that the source text may be generated and published
+  - 🤖 long inputs are split before TTS
+    - 🤖 default chunk size is `--max-tts-chars 1800`
+    - 🤖 lower it only if the TTS backend still truncates or fails
   - `--rough-timings` updates segment times by text length after generation
   - production-quality alignment should replace rough timings with sentence or word alignment
 - local playback
@@ -39,6 +42,8 @@ voice and publication workflow
   - derived manifest, cover, and audio stay under ignored `local/`
   - build the current local demo manifest
     - `python3 scripts/build-local-owned-demo.py --confirm-local-owned-use`
+  - 🤖 local owned-book manifests include the whole extracted text by default
+    - 🤖 pass `--max-chars N` only for a deliberate excerpt
   - generate local-only audio
     - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/the-contrarian/manifest.json --out local/owned-books/the-contrarian/demo.m4a --confirm-local-owned-use --rough-timings`
   - open the local demo

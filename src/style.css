@@ -38,7 +38,7 @@ select {
   grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
   gap: 20px;
   min-width: 0;
-  max-width: 1120px;
+  max-width: none;
   margin: 0 auto;
 }
 
@@ -173,11 +173,13 @@ h1 {
 }
 
 .timeline {
+  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: 42px 1fr 42px;
   align-items: center;
   gap: 10px;
-  width: 100%;
+  width: calc(100vw - 36px);
+  max-width: none;
   color: #566461;
   font-variant-numeric: tabular-nums;
 }
@@ -335,5 +337,9 @@ h1 {
     max-height: none;
     padding-bottom: 32px;
     font-size: 1.04rem;
+  }
+
+  .timeline {
+    width: calc(100vw - 24px);
   }
 }

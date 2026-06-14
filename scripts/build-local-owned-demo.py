@@ -19,7 +19,7 @@ DEFAULT_TITLE = (
     "The Contrarian: Peter Thiel and the Rise of the Silicon Valley Oligarchs"
 )
 DEFAULT_AUTHOR = "Max Chafkin"
-DEFAULT_MAX_CHARS = 2400
+DEFAULT_MAX_CHARS = 0
 SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[\"'A-Z])")
 
 
@@ -32,7 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--id", default=DEFAULT_ID)
     parser.add_argument("--title", default=DEFAULT_TITLE)
     parser.add_argument("--author", default=DEFAULT_AUTHOR)
-    parser.add_argument("--max-chars", type=int, default=DEFAULT_MAX_CHARS)
+    parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=DEFAULT_MAX_CHARS,
+        help="Maximum source characters to include; 0 includes the whole text.",
+    )
     parser.add_argument("--audio-name", default="demo.m4a")
     parser.add_argument(
         "--confirm-local-owned-use",
@@ -103,7 +108,7 @@ def write_local_file(path: Path, text: str) -> None:
 
 
 def read_excerpt(path: Path, max_chars: int) -> str:
-    if max_chars < 600:
+    if max_chars and max_chars < 600:
         raise SystemExit("--max-chars must be at least 600")
     chunks: list[str] = []
     n_chars = 0
@@ -114,11 +119,13 @@ def read_excerpt(path: Path, max_chars: int) -> str:
                 continue
             chunks.append(text)
             n_chars += len(text) + 1
-            if n_chars >= max_chars + 800:
+            if max_chars and n_chars >= max_chars + 800:
                 break
     excerpt = normalize_space(" ".join(chunks))
     if not excerpt:
         raise SystemExit("no text found in owned input")
+    if not max_chars:
+        return excerpt
     if len(excerpt) <= max_chars:
         return excerpt
     end = max(
