@@ -1,0 +1,37 @@
+private book artifacts
+- purpose
+  - keep extracted book text and generated private demos outside the public Pages source repo
+  - let the Pages workflow fetch a private artifact repo at build time
+- private repo layout
+  - `books.json`
+    - private catalog
+    - entries with `publish: true` are staged into the Pages artifact
+    - entries without `publish: true` stay private
+  - `top-level-english-files.json`
+    - private audited list of top-level English source filenames
+  - `texts/<book>.txt`
+    - extracted top-level English book text
+  - `generated/<book>/manifest.json`
+    - demo manifest for books intentionally selected for publication
+  - `generated/<book>/demo.m4a`
+    - demo audio for selected books
+  - `generated/<book>/cover.svg`
+    - demo cover for selected books
+- export local top-level English files
+  - `python3 scripts/export-private-book-artifacts.py --book-dir ../book --private-root ../adiob-private-artifacts --confirm-private-repo-output`
+- Pages fetch
+  - workflow secret
+    - `PRIVATE_BOOK_ARTIFACTS_TOKEN`
+  - default private repo
+    - `SichangHe/adiob-private-artifacts`
+  - fetch target
+    - `_private-books`
+- Pages staging
+  - copies only generated artifacts from private catalog entries with `publish: true`
+  - does not copy `texts/`
+  - rewrites staged manifests to local artifact paths
+  - writes selected private entries into `_site/field-notes-819a/catalog.json`
+- reader path
+  - `field-notes-819a/`
+- root path
+  - irrelevant maintenance-notes page

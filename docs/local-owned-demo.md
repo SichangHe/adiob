@@ -17,7 +17,7 @@ local owned-book demo
   - serve local reader
     - `python3 scripts/serve-local.py 8000`
   - open local demo
-    - `http://127.0.0.1:8000/?manifest=local/owned-books/the-contrarian/manifest.json`
+    - `http://127.0.0.1:8000/field-notes-819a/?manifest=local/owned-books/the-contrarian/manifest.json`
 - other local books
   - extract local file text
     - `python3 scripts/extract-owned-book-text.py --source <book-file.pdf> --out owned-text/<book>.txt --confirm-local-owned-use`

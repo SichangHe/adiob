@@ -29,7 +29,7 @@ voice and publication workflow
   - `python3 scripts/serve-local.py 8000` serves existing files from disk
   - local audio seeking requires byte-range responses
   - the browser tries `releaseAudio.url` first when present
-  - ignored local manifests can be opened with `?manifest=local/.../manifest.json`
+  - ignored local manifests can be opened from `field-notes-819a/?manifest=local/.../manifest.json`
   - if release audio is stale, update or remove `releaseAudio.url`
   - if fallback audio is stale, replace the file named by the manifest `audio`
   - `-10` and `+10` seek by seconds
@@ -42,7 +42,7 @@ voice and publication workflow
   - generate local-only audio
     - `uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py --manifest local/owned-books/the-contrarian/manifest.json --out local/owned-books/the-contrarian/demo.m4a --confirm-local-owned-use --rough-timings`
   - open the local demo
-    - `http://127.0.0.1:8000/?manifest=local/owned-books/the-contrarian/manifest.json`
+    - `http://127.0.0.1:8000/field-notes-819a/?manifest=local/owned-books/the-contrarian/manifest.json`
   - these assets are not entries in `data/books.json` and are not release assets
   - release tooling refuses `localOnly` manifests and files under private `local/` or `owned-text/` roots
 - publish release audio

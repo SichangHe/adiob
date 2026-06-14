@@ -10,7 +10,7 @@ It assumes audio has already been generated and aligned to text. The page loads 
 python3 scripts/serve-local.py 8000
 ```
 
-Open `http://localhost:8000` from this directory.
+Open `http://localhost:8000/field-notes-819a/` from this directory.
 
 Use `scripts/serve-local.py` instead of `python3 -m http.server` for local audiobook testing. It supports byte-range requests, which browsers need for seeking inside `media/sample.m4a`.
 
@@ -28,7 +28,7 @@ uv run --with 'kokoro>=0.9.4' --with soundfile scripts/generate-kokoro-audio.py 
 python3 scripts/serve-local.py 8000
 ```
 
-Open `http://127.0.0.1:8000/?manifest=local/owned-books/the-contrarian/manifest.json`.
+Open `http://127.0.0.1:8000/field-notes-819a/?manifest=local/owned-books/the-contrarian/manifest.json`.
 
 Local owned-book manifests and audio stay under ignored `local/`. They are not release assets, not GitHub Pages content, and not entries in `data/books.json`. See `docs/local-owned-demo.md`.
 

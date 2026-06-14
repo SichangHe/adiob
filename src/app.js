@@ -12,10 +12,14 @@ const scrub = document.querySelector("#scrub");
 const segments = document.querySelector("#segments");
 const title = document.querySelector("#book-title");
 const author = document.querySelector("#book-author");
+const bookSelect = document.querySelector("#book-select");
+const bookPicker = document.querySelector("#book-picker");
 
 let book = null;
+let catalog = null;
 let activeId = "";
 let pendingSeekSec = null;
+let currentManifest = "";
 
 async function loadJson(path) {
   const response = await fetch(path);
@@ -23,6 +27,10 @@ async function loadJson(path) {
     return { error: `could not load ${path}` };
   }
   return { value: await response.json() };
+}
+
+function catalogPath() {
+  return document.body.dataset.catalog || "data/books.json";
 }
 
 function requestedManifest() {
@@ -45,23 +53,69 @@ function requestedManifest() {
   return { value: manifest };
 }
 
+function requestedBook() {
+  return new URLSearchParams(window.location.search).get("book");
+}
+
+function rootPath(path) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith("/")) {
+    return path;
+  }
+  if (path.startsWith("../") || path.startsWith("./")) {
+    return path;
+  }
+  return `../${path}`;
+}
+
+function assetPath(path) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith("/")) {
+    return path;
+  }
+  if (path.startsWith("local/") || path.startsWith("media/")) {
+    return rootPath(path);
+  }
+  if (!currentManifest) {
+    return rootPath(path);
+  }
+  return new URL(path, new URL(currentManifest, window.location.href)).href;
+}
+
 async function loadBook() {
   const requested = requestedManifest();
   if (requested.error) {
     return requested;
   }
   if (requested.value) {
-    return loadJson(requested.value);
+    bookPicker.hidden = true;
+    currentManifest = rootPath(requested.value);
+    return loadJson(currentManifest);
   }
-  const indexResult = await loadJson("data/books.json");
+  const indexResult = await loadJson(catalogPath());
   if (indexResult.error) {
     return indexResult;
   }
-  const item = indexResult.value.books.find((entry) => entry.id === indexResult.value.defaultBook);
+  catalog = indexResult.value;
+  renderBookSelect(catalog.books);
+  const selectedId = requestedBook() || catalog.defaultBook;
+  const item = catalog.books.find((entry) => entry.id === selectedId);
   if (!item) {
-    return { error: "default book is missing" };
+    return { error: "selected book is missing" };
   }
+  bookSelect.value = item.id;
+  currentManifest = item.manifest;
   return loadJson(item.manifest);
+}
+
+function renderBookSelect(books) {
+  bookSelect.replaceChildren(
+    ...books.map((entry) => {
+      const option = document.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.title || entry.id;
+      return option;
+    }),
+  );
+  bookPicker.hidden = books.length <= 1;
 }
 
 function renderError(message) {
@@ -79,15 +133,16 @@ function renderBook(nextBook) {
   title.textContent = book.title;
   author.textContent = book.author;
   license.textContent = book.license;
-  cover.src = book.cover;
+  cover.src = assetPath(book.cover);
   cover.alt = `${book.title} cover`;
   audio.dataset.releaseFallbackUsed = "0";
-  audio.src = book.releaseAudio?.url || book.audio;
+  audio.src = assetPath(book.releaseAudio?.url || book.audio);
   setPlaybackRate();
   renderReleaseAudio(book.releaseAudio);
   scrub.max = String(book.durationSec);
   duration.textContent = fmtTime(book.durationSec);
   segments.replaceChildren(...book.segments.map(renderSegment));
+  activeId = "";
   updateProgress(0);
 }
 
@@ -98,7 +153,7 @@ function renderReleaseAudio(track) {
     return;
   }
   releaseAudio.hidden = false;
-  releaseAudio.href = track.url;
+  releaseAudio.href = assetPath(track.url);
   releaseAudio.textContent = track.asset ? `Release audio: ${track.asset}` : "Release audio";
 }
 
@@ -196,6 +251,27 @@ scrub.addEventListener("input", () => {
   seekTo(Number(scrub.value));
 });
 playbackRate.addEventListener("change", setPlaybackRate);
+bookSelect.addEventListener("change", async () => {
+  if (!catalog) {
+    return;
+  }
+  const item = catalog.books.find((entry) => entry.id === bookSelect.value);
+  if (!item) {
+    renderError("selected book is missing");
+    return;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.delete("manifest");
+  url.searchParams.set("book", item.id);
+  window.history.replaceState(null, "", url);
+  currentManifest = item.manifest;
+  const result = await loadJson(item.manifest);
+  if (result.error) {
+    renderError(result.error);
+    return;
+  }
+  renderBook(result.value);
+});
 audio.addEventListener("loadedmetadata", () => {
   const maxSec = maxPlaybackSec();
   scrub.max = String(maxSec);
@@ -210,7 +286,7 @@ audio.addEventListener("error", () => {
     return;
   }
   audio.dataset.releaseFallbackUsed = "1";
-  audio.src = book.audio;
+  audio.src = assetPath(book.audio);
   audio.load();
 });
 audio.addEventListener("timeupdate", () => updateProgress(audio.currentTime));

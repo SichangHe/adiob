@@ -74,6 +74,7 @@ select {
 
 .kicker,
 .license,
+.notice,
 #book-author {
   margin: 0;
   color: #5b6867;
@@ -136,6 +137,32 @@ h1 {
   font-weight: 800;
 }
 
+.book-picker {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  color: #566461;
+  font-weight: 800;
+}
+
+.book-picker select {
+  min-height: 40px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #102326;
+  background: var(--paper);
+}
+
+.book-picker select:focus-visible {
+  border-color: var(--accent);
+  outline: 3px solid rgb(15 111 104 / 18%);
+}
+
+.book-picker[hidden] {
+  display: none;
+}
+
 .rate-control select {
   min-height: 40px;
   min-width: 0;
@@ -165,6 +192,11 @@ h1 {
   padding-top: 2px;
   border-top: 1px solid var(--line);
   font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  font-size: 0.82rem;
   overflow-wrap: anywhere;
 }
 
@@ -247,6 +279,29 @@ h1 {
   border-radius: 8px;
   color: #6e2019;
   background: #fff5f3;
+}
+
+.fake-page {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 100vh;
+  max-width: 54ch;
+  margin: 0 auto;
+  padding: 42px 18px;
+}
+
+.fake-page h1,
+.fake-page p {
+  margin: 0;
+}
+
+.fake-page h1 {
+  font-size: 1.8rem;
+}
+
+.fake-page p {
+  color: #5b6867;
 }
 
 @media (max-width: 760px) {
