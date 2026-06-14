@@ -59,6 +59,28 @@ voice and publication workflow
     - `http://127.0.0.1:8000/field-notes-819a/`
   - these assets are not entries in `data/books.json` and are not release assets
   - release tooling refuses `localOnly` manifests and files under private `local/` or `owned-text/` roots
+- publish catalog audio
+  - use this to process every catalog entry into deployable audio
+  - command
+    - `scripts/process-private-book-release.py --private-root ../adiob-private-artifacts --all-books --release-tag audio-owned-chunks-v2 -R SichangHe/adiob --confirm-rights`
+  - use `--book-id <id>` instead of `--all-books` to process one book
+  - omit `--max-chars` for full-book audio
+    - `--max-chars 30000` intentionally makes an excerpt of roughly 30 minutes
+  - script steps
+    - builds a full ignored manifest under `local/owned-books/<book>`
+    - generates chunked Kokoro audio under `local/owned-books/<book>/chunks`
+    - uploads flat GitHub Release assets named `<book>-chunk-NNN.<ext>`
+    - rewrites `audioChunks[].path` to release URLs
+    - writes the linked manifest and catalog metadata under the artifact repo
+    - skips books that already have complete linked release chunks
+  - generated segment timings are rough batched timings
+    - this keeps deployment throughput practical for full books
+  - after review, commit and push the private artifact repo
+  - update `.github/workflows/pages.yml` `PRIVATE_BOOK_ARTIFACT_REF` to that private commit SHA
+  - commit and push the public repo to deploy the linked catalog
+  - Pages staging includes every catalog entry
+    - entries without complete generated chunks are staged as full text
+    - entries with a full-book generation marker and release-backed chunks are staged with audio
 - publish release audio
   - release assets give stable public URLs and avoid making Pages the primary audio host
   - source: GitHub CLI says `gh release upload <tag> <files>...`

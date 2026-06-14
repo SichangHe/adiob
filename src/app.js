@@ -28,6 +28,7 @@ const DEFAULT_RATE = 1;
 const SEEK_STEP_SEC = 10;
 const VOLUME_STEP = 0.1;
 const AUDIO_CHUNK_TOLERANCE_SEC = 0.05;
+const PLAYBACK_RATE_STORAGE_KEY = "adiob.playbackRate";
 
 let book = null;
 let catalog = null;
@@ -65,16 +66,37 @@ function rateLabel(rate) {
 }
 
 function renderPlaybackRates() {
+  const savedRate = savedPlaybackRate();
   const options = [];
   for (let rate = MIN_RATE; rate <= MAX_RATE + RATE_STEP / 2; rate += RATE_STEP) {
     const value = Number(rate.toFixed(1));
     const option = document.createElement("option");
     option.value = rateValue(value);
     option.textContent = rateLabel(value);
-    option.selected = value === DEFAULT_RATE;
+    option.selected = value === savedRate;
     options.push(option);
   }
   playbackRate.replaceChildren(...options);
+}
+
+function savedPlaybackRate() {
+  try {
+    const rate = Number(window.localStorage.getItem(PLAYBACK_RATE_STORAGE_KEY));
+    if (Number.isFinite(rate) && rate >= MIN_RATE && rate <= MAX_RATE) {
+      return Number(rate.toFixed(1));
+    }
+  } catch {
+    return DEFAULT_RATE;
+  }
+  return DEFAULT_RATE;
+}
+
+function savePlaybackRate(rate) {
+  try {
+    window.localStorage.setItem(PLAYBACK_RATE_STORAGE_KEY, rateValue(rate));
+  } catch {
+    return;
+  }
 }
 
 async function loadJson(path) {
@@ -535,6 +557,7 @@ function loadAudioChunk(index, playAfterLoad = false) {
   activeAudioChunkIndex = nextIndex;
   audio.src = nextSrc;
   audio.load();
+  setPlaybackRate();
   return true;
 }
 
@@ -581,6 +604,7 @@ function fallbackFromChunkError() {
   if (hasFallbackAudio()) {
     audio.src = assetPath(book.releaseAudio?.url || book.audio);
     audio.load();
+    setPlaybackRate();
   } else {
     audio.removeAttribute("src");
     audio.load();
@@ -930,9 +954,17 @@ function setPlaying(isPlaying) {
   play.textContent = isPlaying ? "Pause" : "Play";
 }
 
-function setPlaybackRate() {
-  const rate = Number(playbackRate.value) || DEFAULT_RATE;
+function setPlaybackRate(options = {}) {
+  const selectedRate = Number(playbackRate.value);
+  const rate =
+    Number.isFinite(selectedRate) && selectedRate >= MIN_RATE && selectedRate <= MAX_RATE
+      ? Number(selectedRate.toFixed(1))
+      : DEFAULT_RATE;
+  playbackRate.value = rateValue(rate);
   audio.playbackRate = rate;
+  if (options.persist) {
+    savePlaybackRate(rate);
+  }
   if (speechPlaying) {
     void playSpeechFrom(Number(scrub.value) || activePage?.startSec || 0);
   }
@@ -945,7 +977,7 @@ function adjustPlaybackRate(delta) {
     Math.max(MIN_RATE, Number((currentRate + delta).toFixed(1))),
   );
   playbackRate.value = rateValue(nextRate);
-  setPlaybackRate();
+  setPlaybackRate({ persist: true });
 }
 
 function adjustVolume(delta) {
@@ -983,8 +1015,15 @@ function shouldHandleKeyboard(event) {
   if (!(target instanceof Element)) {
     return true;
   }
+  if (target.closest("textarea, [contenteditable='true']")) {
+    return false;
+  }
+  const input = target.closest("input");
+  if (input instanceof HTMLInputElement) {
+    return input.type === "range";
+  }
   return !target.closest(
-    "button, a[href], input, select, textarea, [contenteditable='true'], [role='button'], [role='link']",
+    "button, a[href], select, [role='button'], [role='link']",
   );
 }
 
@@ -1036,7 +1075,7 @@ scrub.addEventListener("input", () => {
 scrub.addEventListener("change", () => {
   seekTo(Number(scrub.value));
 });
-playbackRate.addEventListener("change", setPlaybackRate);
+playbackRate.addEventListener("change", () => setPlaybackRate({ persist: true }));
 pageSelect.addEventListener("change", async () => {
   const index = Number(pageSelect.value);
   if (!Number.isFinite(index) || !book?.pages?.[index]) {
@@ -1099,6 +1138,7 @@ bookSelect.addEventListener("change", async () => {
   await renderBook(result.value, manifestPath);
 });
 audio.addEventListener("loadedmetadata", () => {
+  setPlaybackRate();
   const maxSec = maxPlaybackSec();
   scrub.max = String(maxSec);
   duration.textContent = fmtTime(maxSec);

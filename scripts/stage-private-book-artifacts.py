@@ -22,10 +22,6 @@ ROUGH_CHARS_PER_SEC = 13.0
 RELEASE_AUDIO_HOST = "github.com"
 RELEASE_AUDIO_PATH_PREFIX = "/SichangHe/adiob/releases/download/"
 SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[\"'A-Z])")
-BODY_HEADING = re.compile(
-    r"^(introduction|introductory|prologue|chapter\b|chapter\s+[ivxlcdm0-9]+)\b",
-    re.IGNORECASE,
-)
 PAGE_HEADING = re.compile(
     r"^(introduction|prologue|epilogue|chapter\b|part\b|book\b|section\b|\d{1,3}\.)",
     re.IGNORECASE,
@@ -210,25 +206,58 @@ def stage_book(
     artifact_subdir: str,
     segment_page_size: int,
     text_page_chars: int,
-) -> dict[str, str]:
+) -> tuple[dict[str, str], bool]:
     book_id = safe_id(book["id"])
     target_dir = site_root / artifact_subdir / book_id
     generated = book.get("generated")
-    if not isinstance(generated, dict):
-        raise SystemExit(f"published private catalog entry must set generated: {book_id}")
-    public_manifest = stage_generated_book(
-        private_root, target_dir, book_id, book, generated, segment_page_size
-    )
+    if isinstance(generated, dict) and generated_has_full_release_audio(
+        private_root, book_id, generated
+    ):
+        public_manifest = stage_generated_book(
+            private_root, target_dir, book_id, book, generated, segment_page_size
+        )
+    else:
+        public_manifest = stage_text_book(
+            private_root, target_dir, book_id, book, text_page_chars
+        )
     write_json(target_dir / "manifest.json", public_manifest)
-    return {
-        "id": book_id,
-        "title": public_manifest["title"],
-        "author": public_manifest["author"],
-        "manifest": reader_relative(
-            reader_path,
-            f"{artifact_subdir}/{book_id}/manifest.json",
-        ),
-    }
+    return (
+        {
+            "id": book_id,
+            "title": public_manifest["title"],
+            "author": public_manifest["author"],
+            "manifest": reader_relative(
+                reader_path,
+                f"{artifact_subdir}/{book_id}/manifest.json",
+            ),
+        },
+        "audio" in public_manifest or "audioChunks" in public_manifest,
+    )
+
+
+def generated_has_full_release_audio(
+    private_root: Path, book_id: str, generated: dict[str, Any]
+) -> bool:
+    try:
+        source_manifest = private_root / require_generated_path(
+            book_id, generated, "manifest", "manifest.json"
+        )
+    except SystemExit:
+        return False
+    if not source_manifest.is_file():
+        return False
+    manifest = read_json(source_manifest)
+    generation = manifest.get("generation")
+    if not isinstance(generation, dict) or generation.get("fullBook") is not True:
+        return False
+    try:
+        segments = public_segments_from(book_id, manifest)
+        chunks = public_audio_chunks_from(book_id, source_manifest.parent, None, manifest)
+    except (KeyError, IndexError, TypeError, ValueError, SystemExit):
+        return False
+    if not chunks or not segments:
+        return False
+    return abs(chunks[-1]["endSec"] - segments[-1]["endSec"]) <= CHUNK_TIMING_TOLERANCE_SEC
 
 
 def stage_generated_book(
@@ -322,7 +351,7 @@ def public_segments_from(book_id: str, manifest: dict[str, Any]) -> list[dict[st
 
 
 def public_audio_chunks_from(
-    book_id: str, source_dir: Path, target_dir: Path, manifest: dict[str, Any]
+    book_id: str, source_dir: Path, target_dir: Path | None, manifest: dict[str, Any]
 ) -> list[dict[str, Any]]:
     chunks = manifest.get("audioChunks")
     if chunks is None:
@@ -336,14 +365,8 @@ def public_audio_chunks_from(
             raise SystemExit(f"manifest audio chunk is not an object: {book_id}")
         url = release_audio_url(chunk.get("path"))
         if url is None:
-            path = safe_relative_file(
-                source_dir, chunk.get("path"), f"{book_id} audio chunk"
-            )
-            source = source_dir / path
-            copy_file(source, target_dir / path)
-            public_path = path.as_posix()
-        else:
-            public_path = url
+            raise SystemExit(f"manifest audio chunk is not a release URL: {book_id}")
+        public_path = url
         start_sec = float(chunk["startSec"])
         end_sec = float(chunk["endSec"])
         if (
@@ -397,30 +420,12 @@ def normalized_lines(path: Path) -> list[str]:
         return [text for line in source if (text := normalize_space(line))]
 
 
-def is_body_heading(line: str) -> bool:
-    return (
-        BODY_HEADING.search(line) is not None
-        and len(line) <= 90
-        and re.search(r"\.{4,}", line) is None
-    )
-
-
 def is_page_heading(line: str) -> bool:
     return (
         PAGE_HEADING.search(line) is not None
         and len(line) <= 120
         and re.search(r"\.{4,}", line) is None
     )
-
-
-def body_start_index(lines: list[str]) -> int:
-    for index, line in enumerate(lines):
-        if not is_body_heading(line):
-            continue
-        following = lines[index + 1 : index + 16]
-        if sum(len(text) >= 40 for text in following) >= 8:
-            return index
-    return 0
 
 
 def split_sentences(text: str) -> list[str]:
@@ -461,7 +466,6 @@ def text_pages_from(path: Path, page_chars: int) -> list[dict[str, Any]]:
     lines = normalized_lines(path)
     if not lines:
         raise SystemExit(f"private text is empty: {path}")
-    lines = lines[body_start_index(lines) :]
     page_lines: list[str] = []
     page_char_count = 0
     raw_pages: list[list[str]] = []
@@ -567,9 +571,7 @@ def main() -> None:
             shutil.rmtree(artifact_root)
         private_catalog = read_json(private_catalog_path)
         for book in private_catalog.get("books", []):
-            if book.get("publish") is not True:
-                continue
-            entry = stage_book(
+            entry, has_audio = stage_book(
                 private_root,
                 site_root,
                 book,
@@ -579,7 +581,7 @@ def main() -> None:
                 args.text_page_chars,
             )
             staged_private_entries.append(entry["id"])
-            if isinstance(book.get("generated"), dict):
+            if has_audio:
                 staged_audio_entries.append(entry["id"])
             by_id[entry["id"]] = entry
     else:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -80,6 +81,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_MAX_TTS_CHARS,
         help="Maximum characters sent to one Kokoro pipeline call.",
+    )
+    parser.add_argument(
+        "--batch-segments",
+        action="store_true",
+        help="Generate combined segment text and assign rough segment timings.",
     )
     return parser.parse_args()
 
@@ -274,8 +280,33 @@ def split_tts_chunks(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
+def estimated_timings(
+    segments: list[dict[str, Any]], duration_sec: float
+) -> list[tuple[float, float]]:
+    weights = [max(1, len(segment["text"].strip())) for segment in segments]
+    total_weight = sum(weights)
+    current_sec = 0.0
+    cumulative_weight = 0
+    timings = []
+    for index, weight in enumerate(weights):
+        start_sec = current_sec
+        cumulative_weight += weight
+        if index == len(weights) - 1:
+            end_sec = duration_sec
+        else:
+            end_sec = duration_sec * cumulative_weight / total_weight
+        timings.append((start_sec, end_sec))
+        current_sec = end_sec
+    return timings
+
+
 def write_kokoro_wav(
-    segments: list[dict[str, Any]], out: Path, lang: str, voice: str, max_tts_chars: int
+    segments: list[dict[str, Any]],
+    out: Path,
+    lang: str,
+    voice: str,
+    max_tts_chars: int,
+    batch_segments: bool,
 ) -> list[tuple[float, float]]:
     try:
         import soundfile as sf
@@ -291,6 +322,16 @@ def write_kokoro_wav(
     current_frame = 0
     timings = []
     with sf.SoundFile(out, "w", samplerate=SAMPLE_RATE_HZ, channels=1) as wav:
+        if batch_segments:
+            text = "\n\n".join(segment["text"].strip() for segment in segments)
+            for chunk in split_tts_chunks(text, max_tts_chars):
+                for _, _, audio in pipeline(chunk, voice=voice):
+                    wav.write(audio)
+                    current_frame += len(audio)
+                    wrote_audio = True
+            if not wrote_audio:
+                raise SystemExit("kokoro produced no audio")
+            return estimated_timings(segments, current_frame / SAMPLE_RATE_HZ)
         for segment in segments:
             text = segment["text"].strip()
             start_sec = current_frame / SAMPLE_RATE_HZ
@@ -354,6 +395,46 @@ def probe_duration_sec(path: Path) -> float:
         text=True,
     )
     return float(result.stdout.strip())
+
+
+def chunk_fingerprint(
+    segments: list[dict[str, Any]],
+    lang: str,
+    voice: str,
+    max_tts_chars: int,
+    batch_segments: bool,
+) -> str:
+    value = {
+        "schema": 1,
+        "lang": lang,
+        "voice": voice,
+        "maxTtsChars": max_tts_chars,
+        "batchSegments": batch_segments,
+        "segments": [
+            {
+                "id": str(segment.get("id", "")),
+                "text": str(segment.get("text", "")),
+            }
+            for segment in segments
+        ],
+    }
+    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def fingerprint_path(audio_path: Path) -> Path:
+    return audio_path.with_name(f"{audio_path.name}.sha256")
+
+
+def read_fingerprint(path: Path) -> str:
+    try:
+        return fingerprint_path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def write_fingerprint(path: Path, value: str) -> None:
+    fingerprint_path(path).write_text(value + "\n", encoding="utf-8")
 
 
 def apply_generated_timings(
@@ -436,7 +517,12 @@ def generate_single_audio(args: argparse.Namespace, segments: list[dict[str, Any
     with tempfile.TemporaryDirectory(prefix="adiob-kokoro-") as tmp:
         wav = Path(tmp) / "audio.wav"
         timings = write_kokoro_wav(
-            segments, wav, args.lang, args.voice, args.max_tts_chars
+            segments,
+            wav,
+            args.lang,
+            args.voice,
+            args.max_tts_chars,
+            args.batch_segments,
         )
         encode_audio(wav, audio_out)
     duration_sec = probe_duration_sec(audio_out)
@@ -478,13 +564,37 @@ def generate_chunked_audio(
     for chunk_index, chunk_segments in enumerate(chunks, start=1):
         relative_audio = chunk_dir / f"chunk-{chunk_index:03d}{ext}"
         audio_out = root_path(relative_audio)
-        with tempfile.TemporaryDirectory(prefix="adiob-kokoro-") as tmp:
-            wav = Path(tmp) / "audio.wav"
-            timings = write_kokoro_wav(
-                chunk_segments, wav, args.lang, args.voice, args.max_tts_chars
-            )
-            encode_audio(wav, audio_out)
-        duration_sec = probe_duration_sec(audio_out)
+        fingerprint = chunk_fingerprint(
+            chunk_segments,
+            args.lang,
+            args.voice,
+            args.max_tts_chars,
+            args.batch_segments,
+        )
+        if (
+            args.batch_segments
+            and audio_out.is_file()
+            and read_fingerprint(audio_out) == fingerprint
+        ):
+            duration_sec = probe_duration_sec(audio_out)
+            timings = estimated_timings(chunk_segments, duration_sec)
+            print(f"reused {audio_out} ({duration_sec:.3f}s)")
+        else:
+            with tempfile.TemporaryDirectory(prefix="adiob-kokoro-") as tmp:
+                wav = Path(tmp) / "audio.wav"
+                timings = write_kokoro_wav(
+                    chunk_segments,
+                    wav,
+                    args.lang,
+                    args.voice,
+                    args.max_tts_chars,
+                    args.batch_segments,
+                )
+                encode_audio(wav, audio_out)
+            duration_sec = probe_duration_sec(audio_out)
+            if args.batch_segments:
+                write_fingerprint(audio_out, fingerprint)
+            print(f"wrote {audio_out} ({duration_sec:.3f}s)")
         raw_duration_sec = timings[-1][1]
         if raw_duration_sec <= 0:
             raise SystemExit("generated audio chunk duration is zero")
@@ -512,7 +622,6 @@ def generate_chunked_audio(
         chunk_refs.append(chunk_ref)
         next_start_sec += duration_sec
         segment_index += len(chunk_segments)
-        print(f"wrote {audio_out} ({duration_sec:.3f}s)")
     if args.rough_timings:
         apply_chunked_generated_timings(
             manifest, generated_segments, chunk_refs, chunk_dir, args.voice, args.lang
