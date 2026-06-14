@@ -63,6 +63,10 @@ voice and publication workflow
   - release assets give stable public URLs and avoid making Pages the primary audio host
   - source: GitHub CLI says `gh release upload <tag> <files>...`
     - https://cli.github.com/manual/gh_release_upload
+  - chunked release urls use the same flat pattern
+    - `https://github.com/SichangHe/adiob/releases/download/<tag>/<asset>`
+    - private staged manifests may put this url in `audioChunks[].path`
+    - the reader fetches absolute chunk urls directly
   - dry run
     - `scripts/publish-release-audio.sh --dry-run -R OWNER/REPO audio-small-walk-v1 data/small-walk.json media/sample.m4a`
   - publish and write the release url into the manifest
@@ -79,7 +83,7 @@ voice and publication workflow
 - static data contract
   - `audioChunks` is preferred when present
   - each audio chunk has `path`, `startSec`, and `endSec`
-  - chunk `path` is relative to the manifest file
+  - chunk `path` is relative to the manifest file or an allowed release url
   - chunk timing is global book time, not local blob time
   - browser speech fallback remains for manifests with transcript pages and no generated audio
   - `audio` remains the local fallback when `releaseAudio.url` is absent or cannot be loaded

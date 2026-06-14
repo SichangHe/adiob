@@ -11,6 +11,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 DEFAULT_ARTIFACT_SUBDIR = "archive-cache-a17"
@@ -18,6 +19,8 @@ DEFAULT_SEGMENT_PAGE_SIZE = 48
 DEFAULT_TEXT_PAGE_CHARS = 12000
 CHUNK_TIMING_TOLERANCE_SEC = 0.05
 ROUGH_CHARS_PER_SEC = 13.0
+RELEASE_AUDIO_HOST = "github.com"
+RELEASE_AUDIO_PATH_PREFIX = "/SichangHe/adiob/releases/download/"
 SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[\"'A-Z])")
 BODY_HEADING = re.compile(
     r"^(introduction|introductory|prologue|chapter\b|chapter\s+[ivxlcdm0-9]+)\b",
@@ -129,6 +132,22 @@ def safe_relative_file(base: Path, value: Any, label: str) -> Path:
     if not resolved.is_relative_to(base.resolve(strict=False)):
         raise SystemExit(f"{label} escapes its artifact directory")
     return path
+
+
+def release_audio_url(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    parsed = urlparse(value)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != RELEASE_AUDIO_HOST
+        or not parsed.path.startswith(RELEASE_AUDIO_PATH_PREFIX)
+        or parsed.query
+        or parsed.fragment
+        or any(part in {"", ".", ".."} for part in parsed.path.split("/")[1:])
+    ):
+        return None
+    return value
 
 
 def safe_artifact_subdir(site_root: Path, value: str) -> str:
@@ -315,11 +334,16 @@ def public_audio_chunks_from(
     for index, chunk in enumerate(chunks, start=1):
         if not isinstance(chunk, dict):
             raise SystemExit(f"manifest audio chunk is not an object: {book_id}")
-        path = safe_relative_file(
-            source_dir, chunk.get("path"), f"{book_id} audio chunk"
-        )
-        source = source_dir / path
-        copy_file(source, target_dir / path)
+        url = release_audio_url(chunk.get("path"))
+        if url is None:
+            path = safe_relative_file(
+                source_dir, chunk.get("path"), f"{book_id} audio chunk"
+            )
+            source = source_dir / path
+            copy_file(source, target_dir / path)
+            public_path = path.as_posix()
+        else:
+            public_path = url
         start_sec = float(chunk["startSec"])
         end_sec = float(chunk["endSec"])
         if (
@@ -330,7 +354,7 @@ def public_audio_chunks_from(
         public_chunks.append(
             {
                 "id": str(chunk.get("id") or f"chunk-{index:03d}"),
-                "path": path.as_posix(),
+                "path": public_path,
                 "startSec": start_sec,
                 "endSec": end_sec,
                 "durationSec": round(end_sec - start_sec, 3),

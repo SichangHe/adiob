@@ -60,7 +60,7 @@ scripts/publish-release-audio.sh --confirm-rights -R OWNER/REPO audio-small-walk
 
 The release script requires `origin` to match `OWNER/REPO` before a real upload. Add `--clobber` only when replacing an existing release asset is intended.
 
-The Pages UI plays `audioChunks` when present. Without chunks, it tries `releaseAudio.url` first and falls back to `audio` if the release asset cannot be loaded. The GitHub Pages workflow is in `.github/workflows/pages.yml`.
+The Pages UI plays `audioChunks` when present. Chunk paths can be manifest-relative files or GitHub Release asset URLs. Without chunks, it tries `releaseAudio.url` first and falls back to `audio` if the release asset cannot be loaded. The GitHub Pages workflow is in `.github/workflows/pages.yml`.
 
 The `-10` and `+10` buttons seek by seconds. Use the Speed menu to change playback tempo in the browser without regenerating audio.
 
@@ -96,7 +96,7 @@ The reader saves per-book playback position in browser `localStorage`.
 `data/books.json` points to one or more book manifests. Each manifest contains:
 
 - `audio`: relative path to pre-generated audio
-- `audioChunks`: optional ordered chunked-audio refs, each with `path`, `startSec`, and `endSec`
+- `audioChunks`: optional ordered chunked-audio refs, each with `path`, `startSec`, and `endSec`; `path` may be manifest-relative or an allowed GitHub Release URL
 - `releaseAudio.url`: optional GitHub release asset URL preferred by the UI
 - `cover`: relative path to cover art
 - `segments`: ordered text spans with `startSec` and `endSec`, for small books

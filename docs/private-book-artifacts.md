@@ -19,6 +19,7 @@ private book artifacts
   - `generated/<book>/chunks/chunk-*.m4a`
     - chunked Kokoro audio for selected books
     - referenced by manifest-relative `audioChunks[].path`
+    - optional for public staging when `audioChunks[].path` is a release URL
   - `generated/<book>/cover.svg`
     - demo cover for selected books
 - export local top-level English files
@@ -45,6 +46,7 @@ private book artifacts
   - rewrites staged manifests to local audio, chunked audio, cover, and page paths
   - writes transcript text into per-book `pages/page-*.json`
   - copies `audioChunks` only from paths under `generated/<book>/`
+  - passes through `https://github.com/SichangHe/adiob/releases/download/...` chunk URLs
   - writes selected private entries into `_site/field-notes-819a/catalog.json`
 - reader path
   - `field-notes-819a/`
