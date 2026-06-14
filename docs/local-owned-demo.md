@@ -19,6 +19,8 @@ local owned-book demo
   - open local demo
     - `http://127.0.0.1:8000/?manifest=local/owned-books/the-contrarian/manifest.json`
 - other local books
+  - extract local file text
+    - `python3 scripts/extract-owned-book-text.py --source <book-file.pdf> --out owned-text/<book>.txt --confirm-local-owned-use`
   - write extracted text to `owned-text/<book>.txt`
   - run `scripts/build-local-owned-demo.py` with a different `--text`, `--out-dir`, `--id`, `--title`, and `--author`
   - generate audio with `--confirm-local-owned-use`
