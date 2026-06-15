@@ -80,14 +80,21 @@ voice and publication workflow
     - skips books that already have complete linked release chunks
   - generated segment timings are rough batched timings
     - this keeps deployment throughput practical for full books
+- mark generated private books public
+  - command
+    - `scripts/set-private-books-publish.py --private-root ../adiob-private-artifacts`
+  - this sets every private catalog entry to `publish: true`
+  - it refuses to write until every entry has full release-backed generated audio
+  - run the full-book release command first when any entry is still catalog-only
+- deploy generated private books
   - after review, commit and push the private artifact repo
   - update `.github/workflows/pages.yml` `PRIVATE_BOOK_ARTIFACT_REF` to that private commit SHA
   - commit and push the public repo to deploy the linked catalog
-  - Pages staging includes every catalog entry
-    - private entries without `publish: true` are metadata-only catalog titles
-    - no private text is copied for metadata-only titles
-    - published private entries must have a full-book generation marker and release-backed chunks
-    - staging fails rather than deploying private text-only browser speech fallback
+- Pages staging includes every catalog entry
+  - private entries without `publish: true` are metadata-only catalog titles
+  - no private text is copied for metadata-only titles
+  - published private entries must have a full-book generation marker and release-backed chunks
+  - staging fails rather than deploying private text-only browser speech fallback
 - publish release audio
   - release assets give stable public URLs and avoid making Pages the primary audio host
   - source: GitHub CLI says `gh release upload <tag> <files>...`
