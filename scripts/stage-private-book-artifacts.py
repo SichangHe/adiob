@@ -77,6 +77,13 @@ def safe_id(value: str) -> str:
     return value
 
 
+def require_book_id(book: dict[str, Any]) -> str:
+    value = book.get("id")
+    if not isinstance(value, str) or not value:
+        raise SystemExit("private catalog entry is missing a string id")
+    return safe_id(value)
+
+
 def expected_generated_path(book_id: str, name: str) -> str:
     return f"generated/{book_id}/{name}"
 
@@ -176,7 +183,7 @@ def stage_book(
     artifact_subdir: str,
     segment_page_size: int,
 ) -> tuple[dict[str, str], bool]:
-    book_id = safe_id(book["id"])
+    book_id = require_book_id(book)
     target_dir = site_root / artifact_subdir / book_id
     generated = book.get("generated")
     if not isinstance(generated, dict) or not generated_has_full_release_audio(
@@ -201,6 +208,51 @@ def stage_book(
         },
         "audio" in public_manifest or "audioChunks" in public_manifest,
     )
+
+
+def stage_catalog_only_book(
+    site_root: Path,
+    book: dict[str, Any],
+    reader_path: str,
+    artifact_subdir: str,
+) -> dict[str, str]:
+    book_id = require_book_id(book)
+    title = str(book.get("title") or book_id)
+    author = str(book.get("author") or "")
+    target_dir = site_root / artifact_subdir / book_id
+    write_text(target_dir / "cover.svg", cover_svg(title, author))
+    write_json(
+        target_dir / "manifest.json",
+        {
+            "id": book_id,
+            "title": title,
+            "author": author,
+            "source": "Private artifact workflow lists this title without publishing text.",
+            "license": "",
+            "privateArtifactWorkflow": True,
+            "catalogOnly": True,
+            "speechFallback": False,
+            "cover": "cover.svg",
+            "durationSec": 0,
+            "segments": [
+                {
+                    "id": "catalog-only",
+                    "startSec": 0,
+                    "endSec": 0,
+                    "text": "Generated audiobook audio is not available for this title yet.",
+                }
+            ],
+        },
+    )
+    return {
+        "id": book_id,
+        "title": title,
+        "author": author,
+        "manifest": reader_relative(
+            reader_path,
+            f"{artifact_subdir}/{book_id}/manifest.json",
+        ),
+    }
 
 
 def generated_has_full_release_audio(
@@ -431,16 +483,22 @@ def main() -> None:
             shutil.rmtree(artifact_root)
         private_catalog = read_json(private_catalog_path)
         for book in private_catalog.get("books", []):
-            if not isinstance(book, dict) or book.get("publish") is not True:
+            if not isinstance(book, dict):
                 continue
-            entry, has_audio = stage_book(
-                private_root,
-                site_root,
-                book,
-                args.reader_path,
-                artifact_subdir,
-                args.segment_page_size,
-            )
+            if book.get("publish") is True:
+                entry, has_audio = stage_book(
+                    private_root,
+                    site_root,
+                    book,
+                    args.reader_path,
+                    artifact_subdir,
+                    args.segment_page_size,
+                )
+            else:
+                entry = stage_catalog_only_book(
+                    site_root, book, args.reader_path, artifact_subdir
+                )
+                has_audio = False
             staged_private_entries.append(entry["id"])
             if has_audio:
                 staged_audio_entries.append(entry["id"])

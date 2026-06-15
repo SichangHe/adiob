@@ -6,7 +6,8 @@ private book artifacts
   - `books.json`
     - private catalog
     - entries with `publish: true` are staged into the Pages artifact
-    - entries without `publish: true` stay private
+    - entries without `publish: true` expose metadata only
+      - text and generated audio stay private
   - `top-level-english-files.json`
     - private audited list of top-level English source filenames
   - `texts/<book>.txt`
@@ -18,8 +19,9 @@ private book artifacts
     - optional when manifest has `audioChunks`
   - `generated/<book>/chunks/chunk-*.m4a`
     - chunked Kokoro audio for selected books
-    - referenced by manifest-relative `audioChunks[].path`
-    - optional for public staging when `audioChunks[].path` is a release URL
+    - local generation output before release upload
+    - public staging requires `audioChunks[].path` to be release URLs
+    - chunk files are not copied into Pages
   - `generated/<book>/cover.svg`
     - demo cover for selected books
 - export local top-level English files
@@ -42,11 +44,13 @@ private book artifacts
     - 🤖 cli form is `gh secret set PRIVATE_BOOK_ARTIFACTS_TOKEN -R SichangHe/adiob`
 - Pages staging
   - copies only generated artifacts from private catalog entries with `publish: true`
+  - lists entries without `publish: true` as catalog-only titles
+    - no private text is copied
+    - no browser speech fallback is enabled
   - does not copy `texts/`
-  - rewrites staged manifests to local audio, chunked audio, cover, and page paths
+  - rewrites staged manifests to cover paths, page paths, and release-backed chunk URLs
   - writes transcript text into per-book `pages/page-*.json`
-  - copies `audioChunks` only from paths under `generated/<book>/`
-  - passes through `https://github.com/SichangHe/adiob/releases/download/...` chunk URLs
+  - passes through only `https://github.com/SichangHe/adiob/releases/download/...` chunk URLs
   - writes selected private entries into `_site/field-notes-819a/catalog.json`
 - reader path
   - `field-notes-819a/`

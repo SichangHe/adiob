@@ -29,6 +29,10 @@ const SEEK_STEP_SEC = 10;
 const VOLUME_STEP = 0.1;
 const AUDIO_CHUNK_TOLERANCE_SEC = 0.05;
 const PLAYBACK_RATE_STORAGE_KEY = "adiob.playbackRate";
+const AUTO_SCROLL_PAUSE_MS = 15000;
+const AUTO_SCROLL_THROTTLE_MS = 900;
+const PROGRAMMATIC_SCROLL_GRACE_MS = 700;
+const MOBILE_MEDIA_QUERY = "(max-width: 760px)";
 
 let book = null;
 let catalog = null;
@@ -48,6 +52,13 @@ let speechProgressTimer = null;
 let speechPlaying = false;
 let speechSeq = 0;
 let scrubDragging = false;
+let autoScrollPausedUntilMs = 0;
+let programmaticScrollUntilMs = 0;
+let lastAutoScrollId = "";
+let lastAutoScrollMs = 0;
+let lastWindowScrollY = window.scrollY;
+let lastSegmentsScrollTop = 0;
+let lastTouchY = null;
 
 function renderBuildTag() {
   const build = buildTag?.dataset.build;
@@ -438,6 +449,8 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
   activePage = null;
   activePageIndex = 0;
   activeAudioChunkIndex = -1;
+  lastAutoScrollId = "";
+  lastAutoScrollMs = 0;
   resumeAudioAfterLoad = false;
   const restoredSec = Math.min(savedProgressSec(book), Number(book.durationSec) || 0);
   restoringProgress = restoredSec > 0;
@@ -494,7 +507,9 @@ function hasAudio() {
 }
 
 function hasSpeech() {
-  return Boolean(book && !hasAudio() && "speechSynthesis" in window);
+  return Boolean(
+    book && book.speechFallback === true && !hasAudio() && "speechSynthesis" in window,
+  );
 }
 
 function canPlay() {
@@ -507,6 +522,65 @@ function setAudioControls() {
   if (disabled) {
     setPlaying(false);
   }
+}
+
+function isPlaybackActive() {
+  return speechPlaying || (hasAudio() && !audio.paused && !audio.ended);
+}
+
+function isMobileLayout() {
+  return window.matchMedia(MOBILE_MEDIA_QUERY).matches;
+}
+
+function markProgrammaticScroll() {
+  programmaticScrollUntilMs = window.performance.now() + PROGRAMMATIC_SCROLL_GRACE_MS;
+}
+
+function revealMobileControls() {
+  if (!isMobileLayout()) {
+    return;
+  }
+  markProgrammaticScroll();
+  play.scrollIntoView({ block: "center", behavior: "auto" });
+}
+
+function pauseAutoScrollForHumanInput(deltaY = 0, options = {}) {
+  const nowMs = window.performance.now();
+  if (options.ignoreProgrammatic && nowMs < programmaticScrollUntilMs) {
+    return;
+  }
+  autoScrollPausedUntilMs = nowMs + AUTO_SCROLL_PAUSE_MS;
+  if (deltaY < 0 && isPlaybackActive()) {
+    revealMobileControls();
+  }
+}
+
+function canAutoScrollTranscript(nowMs = window.performance.now()) {
+  return isPlaybackActive() && !scrubDragging && nowMs >= autoScrollPausedUntilMs;
+}
+
+function autoScrollActiveSegment(active) {
+  if (!active) {
+    return;
+  }
+  const nowMs = window.performance.now();
+  if (!canAutoScrollTranscript(nowMs)) {
+    return;
+  }
+  if (
+    active.dataset.id === lastAutoScrollId &&
+    nowMs - lastAutoScrollMs < AUTO_SCROLL_THROTTLE_MS
+  ) {
+    return;
+  }
+  lastAutoScrollId = active.dataset.id || "";
+  lastAutoScrollMs = nowMs;
+  markProgrammaticScroll();
+  active.scrollIntoView({
+    block: isMobileLayout() ? "center" : "nearest",
+    inline: "nearest",
+    behavior: "auto",
+  });
 }
 
 function audioChunkIndexAt(valueSec) {
@@ -777,6 +851,7 @@ async function switchPage(index, options = {}) {
     activePageIndex = nextIndex;
     activePage = { ...page, segments: result.value };
     segments.replaceChildren(...activePage.segments.map(renderSegment));
+    lastSegmentsScrollTop = segments.scrollTop;
     activeId = "";
     updatePageControls();
     updateProgress(options.updateSec ?? Math.max(page.startSec, Number(scrub.value) || 0));
@@ -881,19 +956,19 @@ function updateProgress(valueSec) {
   scrub.value = String(valueSec);
   currentTime.textContent = fmtTime(valueSec);
   const nextSegment = segmentAt(valueSec);
-  if (!nextSegment || nextSegment.id === activeId) {
+  if (!nextSegment) {
     return;
   }
-  activeId = nextSegment.id;
-  for (const button of segments.querySelectorAll(".segment")) {
-    const isActive = button.dataset.id === activeId;
-    button.classList.toggle("active", isActive);
-    button.toggleAttribute("aria-current", isActive);
+  if (nextSegment.id !== activeId) {
+    activeId = nextSegment.id;
+    for (const button of segments.querySelectorAll(".segment")) {
+      const isActive = button.dataset.id === activeId;
+      button.classList.toggle("active", isActive);
+      button.toggleAttribute("aria-current", isActive);
+    }
   }
   const active = segments.querySelector(".segment.active");
-  if (segments.scrollHeight > segments.clientHeight + 1) {
-    active?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }
+  autoScrollActiveSegment(active);
 }
 
 function maxPlaybackSec() {
@@ -1060,6 +1135,41 @@ function shouldHandleKeyboard(event) {
   return true;
 }
 
+function handleWindowScroll() {
+  const nextScrollY = window.scrollY;
+  const deltaY = nextScrollY - lastWindowScrollY;
+  lastWindowScrollY = nextScrollY;
+  if (deltaY !== 0) {
+    pauseAutoScrollForHumanInput(deltaY, { ignoreProgrammatic: true });
+  }
+}
+
+function handleSegmentsScroll() {
+  const nextScrollTop = segments.scrollTop;
+  const deltaY = nextScrollTop - lastSegmentsScrollTop;
+  lastSegmentsScrollTop = nextScrollTop;
+  if (deltaY !== 0) {
+    pauseAutoScrollForHumanInput(deltaY, { ignoreProgrammatic: true });
+  }
+}
+
+function handleTouchStart(event) {
+  lastTouchY = event.touches[0]?.clientY ?? null;
+}
+
+function handleTouchMove(event) {
+  const nextTouchY = event.touches[0]?.clientY ?? null;
+  if (lastTouchY === null || nextTouchY === null) {
+    lastTouchY = nextTouchY;
+    return;
+  }
+  const deltaY = lastTouchY - nextTouchY;
+  lastTouchY = nextTouchY;
+  if (deltaY !== 0) {
+    pauseAutoScrollForHumanInput(deltaY);
+  }
+}
+
 back.addEventListener("click", () => seekBy(-SEEK_STEP_SEC));
 forward.addEventListener("click", () => seekBy(SEEK_STEP_SEC));
 play.addEventListener("click", togglePlayback);
@@ -1113,6 +1223,15 @@ document.addEventListener(
   },
   { capture: true },
 );
+window.addEventListener("scroll", handleWindowScroll, { passive: true });
+segments.addEventListener("scroll", handleSegmentsScroll, { passive: true });
+document.addEventListener(
+  "wheel",
+  (event) => pauseAutoScrollForHumanInput(event.deltaY),
+  { passive: true },
+);
+document.addEventListener("touchstart", handleTouchStart, { passive: true });
+document.addEventListener("touchmove", handleTouchMove, { passive: true });
 scrub.addEventListener("input", () => {
   const valueSec = scrubValueSec();
   if (scrubDragging) {

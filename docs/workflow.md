@@ -84,7 +84,8 @@ voice and publication workflow
   - update `.github/workflows/pages.yml` `PRIVATE_BOOK_ARTIFACT_REF` to that private commit SHA
   - commit and push the public repo to deploy the linked catalog
   - Pages staging includes every catalog entry
-    - private entries must set `publish: true`
+    - private entries without `publish: true` are metadata-only catalog titles
+    - no private text is copied for metadata-only titles
     - published private entries must have a full-book generation marker and release-backed chunks
     - staging fails rather than deploying private text-only browser speech fallback
 - publish release audio
@@ -113,7 +114,7 @@ voice and publication workflow
   - each audio chunk has `path`, `startSec`, and `endSec`
   - chunk `path` is relative to the manifest file or an allowed release url
   - chunk timing is global book time, not local blob time
-  - browser speech fallback remains for manifests with transcript pages and no generated audio
+  - browser speech fallback is opt-in with `speechFallback: true`
   - `audio` remains the local fallback when `releaseAudio.url` is absent or cannot be loaded
   - `releaseAudio.url` is tried first by the browser when present
   - the UI also shows a direct link to the release asset
