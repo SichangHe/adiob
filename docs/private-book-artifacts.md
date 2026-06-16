@@ -6,8 +6,9 @@ private book artifacts
   - `books.json`
     - private catalog
     - entries with `publish: true` are staged into the Pages artifact
-    - entries without `publish: true` expose metadata only
-      - text and generated audio stay private
+    - entries without `publish: true` are staged as text-only reader entries
+      - text transcript pages are copied into the Pages artifact
+      - generated audio stays private
   - `top-level-english-files.json`
     - private audited list of top-level English source filenames
   - `texts/<book>.txt`
@@ -44,10 +45,11 @@ private book artifacts
     - 🤖 cli form is `gh secret set PRIVATE_BOOK_ARTIFACTS_TOKEN -R SichangHe/adiob`
 - Pages staging
   - copies only generated artifacts from private catalog entries with `publish: true`
-  - lists entries without `publish: true` as catalog-only titles
-    - no private text is copied
-    - no browser speech fallback is enabled
-  - does not copy `texts/`
+  - stages entries without `publish: true` as text-only reader titles
+    - transcript pages are copied from generated manifests when present
+    - transcript pages are copied from private text when no generated manifest exists
+    - browser speech fallback stays available for text-only entries
+  - does not copy raw `texts/` files
   - rewrites staged manifests to cover paths, page paths, and release-backed chunk URLs
   - writes transcript text into per-book `pages/page-*.json`
   - passes through only `https://github.com/SichangHe/adiob/releases/download/...` chunk URLs

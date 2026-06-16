@@ -91,10 +91,12 @@ voice and publication workflow
   - update `.github/workflows/pages.yml` `PRIVATE_BOOK_ARTIFACT_REF` to that private commit SHA
   - commit and push the public repo to deploy the linked catalog
 - Pages staging includes every catalog entry
-  - private entries without `publish: true` are metadata-only catalog titles
-  - no private text is copied for metadata-only titles
+  - private entries without `publish: true` are text-only reader titles
+  - text-only entries use generated transcript text when present
+  - text-only entries use private text when no generated manifest exists
+  - browser speech fallback is available for text-only entries
   - published private entries must have a full-book generation marker and release-backed chunks
-  - staging fails rather than deploying private text-only browser speech fallback
+  - published entries still fail staging rather than silently losing generated audio
 - publish release audio
   - release assets give stable public URLs and avoid making Pages the primary audio host
   - source: GitHub CLI says `gh release upload <tag> <files>...`

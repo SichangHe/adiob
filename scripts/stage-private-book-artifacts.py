@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import importlib.util
 import json
 import os
 import posixpath
@@ -10,6 +11,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from urllib.parse import urlparse
 
@@ -41,6 +43,16 @@ def parse_args() -> argparse.Namespace:
 
 def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_local_builder() -> ModuleType:
+    path = Path(__file__).resolve().parent / "build-local-owned-demo.py"
+    spec = importlib.util.spec_from_file_location("local_owned_builder", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"could not load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
@@ -98,6 +110,19 @@ def require_generated_path(
             f"private catalog entry {book_id} must set generated.{key} to {expected}"
         )
     return Path(expected)
+
+
+def require_text_path(private_root: Path, book_id: str, book: dict[str, Any]) -> Path:
+    value = book.get("text")
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"private catalog entry {book_id} is missing text")
+    path = private_root / value
+    resolved = path.resolve(strict=False)
+    if not resolved.is_relative_to(private_root.resolve(strict=False)):
+        raise SystemExit(f"private catalog entry {book_id} has unsafe text path")
+    if not path.is_file():
+        raise SystemExit(f"missing private text artifact: {path}")
+    return path
 
 
 def copy_file(source: Path, target: Path) -> None:
@@ -210,39 +235,35 @@ def stage_book(
     )
 
 
-def stage_catalog_only_book(
+def stage_text_only_book(
+    private_root: Path,
     site_root: Path,
     book: dict[str, Any],
     reader_path: str,
     artifact_subdir: str,
+    segment_page_size: int,
 ) -> dict[str, str]:
     book_id = require_book_id(book)
     title = str(book.get("title") or book_id)
     author = str(book.get("author") or "")
     target_dir = site_root / artifact_subdir / book_id
     write_text(target_dir / "cover.svg", cover_svg(title, author))
+    segments, timing = text_only_segments_from(private_root, book_id, book)
+    refs = write_page_chunks(
+        target_dir, segment_pages_from(segments, segment_page_size)
+    )
     write_json(
         target_dir / "manifest.json",
-        {
-            "id": book_id,
-            "title": title,
-            "author": author,
-            "source": "Private artifact workflow lists this title without publishing text.",
-            "license": "",
-            "privateArtifactWorkflow": True,
-            "catalogOnly": True,
-            "speechFallback": False,
-            "cover": "cover.svg",
-            "durationSec": 0,
-            "segments": [
-                {
-                    "id": "catalog-only",
-                    "startSec": 0,
-                    "endSec": 0,
-                    "text": "Generated audiobook audio is not available for this title yet.",
-                }
-            ],
-        },
+        public_manifest_from(
+            book_id,
+            book,
+            {"id": book_id, "title": title, "author": author},
+            refs,
+            audio=None,
+            audio_chunks=None,
+            cover="cover.svg",
+            timing=timing,
+        ),
     )
     return {
         "id": book_id,
@@ -253,6 +274,31 @@ def stage_catalog_only_book(
             f"{artifact_subdir}/{book_id}/manifest.json",
         ),
     }
+
+
+def text_only_segments_from(
+    private_root: Path, book_id: str, book: dict[str, Any]
+) -> tuple[list[dict[str, Any]], str]:
+    generated = book.get("generated")
+    if generated not in (None, {}):
+        if not isinstance(generated, dict):
+            raise SystemExit(
+                f"private catalog entry {book_id} has invalid generated metadata"
+            )
+        path = private_root / require_generated_path(
+            book_id, generated, "manifest", "manifest.json"
+        )
+        if not path.is_file():
+            raise SystemExit(f"missing private generated manifest: {path}")
+        return public_segments_from(book_id, read_json(path)), "generated transcript"
+    builder = load_local_builder()
+    text_path = require_text_path(private_root, book_id, book)
+    try:
+        text = builder.read_excerpt(text_path, 0, None, True)
+    except SystemExit:
+        text = builder.read_excerpt(text_path, 0, None, False)
+    segments = builder.rough_segments(builder.split_segments(text))
+    return segments, "private text browser speech timing"
 
 
 def generated_has_full_release_audio(
@@ -495,8 +541,13 @@ def main() -> None:
                     args.segment_page_size,
                 )
             else:
-                entry = stage_catalog_only_book(
-                    site_root, book, args.reader_path, artifact_subdir
+                entry = stage_text_only_book(
+                    private_root,
+                    site_root,
+                    book,
+                    args.reader_path,
+                    artifact_subdir,
+                    args.segment_page_size,
                 )
                 has_audio = False
             staged_private_entries.append(entry["id"])
