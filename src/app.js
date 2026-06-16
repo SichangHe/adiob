@@ -33,6 +33,7 @@ const AUTO_SCROLL_PAUSE_MS = 15000;
 const AUTO_SCROLL_THROTTLE_MS = 900;
 const PROGRAMMATIC_SCROLL_GRACE_MS = 700;
 const MOBILE_MEDIA_QUERY = "(max-width: 760px)";
+const SYSTEM_SPEECH_PARAMS = new Set(["system", "speech", "fallback"]);
 
 let book = null;
 let catalog = null;
@@ -46,6 +47,7 @@ let renderSeq = 0;
 let pageSeq = 0;
 let pageLoad = null;
 let activeAudioChunkIndex = -1;
+let audioUnavailable = false;
 let resumeAudioAfterLoad = false;
 let speechUtterance = null;
 let speechProgressTimer = null;
@@ -449,6 +451,7 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
   activePage = null;
   activePageIndex = 0;
   activeAudioChunkIndex = -1;
+  audioUnavailable = false;
   lastAutoScrollId = "";
   lastAutoScrollMs = 0;
   resumeAudioAfterLoad = false;
@@ -464,7 +467,10 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
   cover.src = assetPath(book.cover, manifestPath);
   cover.alt = `${book.title} cover`;
   audio.dataset.releaseFallbackUsed = "0";
-  if (hasChunkedAudio()) {
+  if (prefersSpeechPlayback()) {
+    audio.removeAttribute("src");
+    audio.load();
+  } else if (hasChunkedAudio()) {
     loadAudioChunk(audioChunkIndexAt(restoredSec));
   } else if (hasAudio()) {
     audio.src = assetPath(book.releaseAudio?.url || book.audio, manifestPath);
@@ -503,13 +509,39 @@ function hasFallbackAudio() {
 }
 
 function hasAudio() {
-  return Boolean(book && (hasChunkedAudio() || hasFallbackAudio()));
+  return Boolean(book && !audioUnavailable && (hasChunkedAudio() || hasFallbackAudio()));
+}
+
+function systemSpeechSelected() {
+  const params = new URLSearchParams(window.location.search);
+  const voice = params.get("voice")?.toLowerCase();
+  return (
+    params.get("speech") === "1" ||
+    params.get("systemVoice") === "1" ||
+    (voice !== undefined && SYSTEM_SPEECH_PARAMS.has(voice))
+  );
+}
+
+function canUseSpeechFallback() {
+  return Boolean(
+      book &&
+      book.catalogOnly !== true &&
+      book.localOnly !== true &&
+      book.speechFallback !== false,
+  );
 }
 
 function hasSpeech() {
   return Boolean(
-    book && book.speechFallback === true && !hasAudio() && "speechSynthesis" in window,
+    book &&
+      "speechSynthesis" in window &&
+      canUseSpeechFallback() &&
+      (!hasAudio() || systemSpeechSelected()),
   );
+}
+
+function prefersSpeechPlayback() {
+  return Boolean(hasSpeech() && (systemSpeechSelected() || !hasAudio() || speechPlaying));
 }
 
 function canPlay() {
@@ -664,6 +696,9 @@ function currentPlaybackSec() {
   if (pendingSeekSec !== null) {
     return pendingSeekSec;
   }
+  if (speechPlaying || (systemSpeechSelected() && hasSpeech())) {
+    return Number.isFinite(scrubSec) ? scrubSec : 0;
+  }
   if (hasAudio() && audio.readyState >= 1 && Number.isFinite(audio.currentTime)) {
     return audioGlobalTime();
   }
@@ -689,9 +724,29 @@ function fallbackFromChunkError() {
     pendingSeekSec = null;
     updateProgress(targetSec);
   }
-  setPlaying(false);
+  if (!speechPlaying) {
+    setPlaying(false);
+  }
   setAudioControls();
   return true;
+}
+
+function disableBrokenAudioFallback(valueSec = currentPlaybackSec()) {
+  if (!book) {
+    return;
+  }
+  audioUnavailable = true;
+  book.audioChunks = [];
+  activeAudioChunkIndex = -1;
+  resumeAudioAfterLoad = false;
+  pendingSeekSec = null;
+  audio.removeAttribute("src");
+  audio.load();
+  updateProgress(valueSec);
+  if (!speechPlaying) {
+    setPlaying(false);
+  }
+  setAudioControls();
 }
 
 function stopSpeech(updateButton = true) {
@@ -888,13 +943,16 @@ function renderSegment(segment, index) {
   button.append(text);
   button.addEventListener("click", (event) => {
     const targetSec = segmentClickSec(event, segment, text);
+    const wasSpeechPlaying = speechPlaying;
     seekTo(targetSec);
-    if (hasAudio()) {
-      void audio.play();
+    if (prefersSpeechPlayback()) {
+      if (!wasSpeechPlaying) {
+        void playSpeechFrom(targetSec);
+      }
       return;
     }
-    if (hasSpeech()) {
-      void playSpeechFrom(targetSec);
+    if (hasAudio()) {
+      void audio.play();
     }
   });
   return button;
@@ -972,6 +1030,9 @@ function updateProgress(valueSec) {
 }
 
 function maxPlaybackSec() {
+  if (prefersSpeechPlayback() && Number.isFinite(book?.durationSec)) {
+    return book.durationSec;
+  }
   if (hasChunkedAudio()) {
     return Number.isFinite(book?.durationSec)
       ? book.durationSec
@@ -989,13 +1050,14 @@ function maxPlaybackSec() {
 function seekTo(valueSec) {
   const targetSec = Math.min(Math.max(0, valueSec), maxPlaybackSec());
   const isRestoring = restoringProgress;
-  const restartSpeech = !hasAudio() && speechPlaying;
+  const restartSpeech = speechPlaying;
+  const useSpeechTiming = prefersSpeechPlayback();
   if (restartSpeech) {
     stopSpeech(false);
   }
   pendingSeekSec = targetSec;
   void ensurePageForTime(targetSec);
-  if (hasChunkedAudio()) {
+  if (hasChunkedAudio() && !useSpeechTiming) {
     const chunkIndex = audioChunkIndexAt(targetSec);
     const wasPlaying = !audio.paused;
     if (chunkIndex !== activeAudioChunkIndex) {
@@ -1004,7 +1066,7 @@ function seekTo(valueSec) {
     if (audio.readyState >= 1) {
       applyPendingAudioSeek();
     }
-  } else if (hasAudio() && audio.readyState >= 1) {
+  } else if (hasAudio() && !useSpeechTiming && audio.readyState >= 1) {
     try {
       audio.currentTime = targetSec;
       if (!isRestoring || targetSec <= 0) {
@@ -1014,7 +1076,7 @@ function seekTo(valueSec) {
     } catch {
       pendingSeekSec = targetSec;
     }
-  } else if (!hasAudio()) {
+  } else if (!hasAudio() || useSpeechTiming) {
     pendingSeekSec = null;
     restoringProgress = false;
   }
@@ -1327,10 +1389,17 @@ audio.addEventListener("loadedmetadata", () => {
   }
 });
 audio.addEventListener("error", () => {
+  if (prefersSpeechPlayback()) {
+    if (!speechPlaying) {
+      disableBrokenAudioFallback();
+    }
+    return;
+  }
   if (fallbackFromChunkError()) {
     return;
   }
   if (!book?.releaseAudio?.url || !book.audio || audio.dataset.releaseFallbackUsed === "1") {
+    disableBrokenAudioFallback();
     return;
   }
   audio.dataset.releaseFallbackUsed = "1";

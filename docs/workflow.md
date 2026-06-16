@@ -121,7 +121,10 @@ voice and publication workflow
   - each audio chunk has `path`, `startSec`, and `endSec`
   - chunk `path` is relative to the manifest file or an allowed release url
   - chunk timing is global book time, not local blob time
-  - browser speech fallback is opt-in with `speechFallback: true`
+  - generated audio is the default playback path whenever `audioChunks` or `audio` exists
+  - browser speech fallback is available only when transcript text is public and either generated audio is unavailable, generated audio is broken, or the URL explicitly selects it
+    - explicit URL selectors are `?speech=1`, `?systemVoice=1`, `?voice=system`, `?voice=speech`, or `?voice=fallback`
+  - set `speechFallback: false` to disable browser speech for a manifest
   - `audio` remains the local fallback when `releaseAudio.url` is absent or cannot be loaded
   - `releaseAudio.url` is tried first by the browser when present
   - the UI also shows a direct link to the release asset
