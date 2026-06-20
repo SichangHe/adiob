@@ -609,12 +609,12 @@ function hasSpeech() {
     book &&
       "speechSynthesis" in window &&
       canUseSpeechFallback() &&
-      (!hasAudio() || systemSpeechSelected()),
+      !hasAudio(),
   );
 }
 
 function prefersSpeechPlayback() {
-  return Boolean(hasSpeech() && (systemSpeechSelected() || !hasAudio() || speechPlaying));
+  return hasSpeech();
 }
 
 function canPlay() {
@@ -1305,20 +1305,26 @@ function togglePlayback() {
   if (!canPlay()) {
     return;
   }
-  if (hasSpeech()) {
+  if (hasAudio()) {
     if (speechPlaying) {
-      stopSpeech(true);
+      stopSpeech(false);
+    }
+    if (audio.paused) {
+      setPlaybackRate();
+      void audio.play();
       return;
     }
-    void playSpeechFrom(Number(scrub.value) || activePage?.startSec || 0);
+    audio.pause();
     return;
   }
-  if (audio.paused) {
+  if (speechPlaying) {
+    stopSpeech(true);
+    return;
+  }
+  if (hasSpeech()) {
     setPlaybackRate();
-    audio.play();
-    return;
+    void playSpeechFrom(Number(scrub.value) || activePage?.startSec || 0);
   }
-  audio.pause();
 }
 
 function releaseShortcutFocus() {

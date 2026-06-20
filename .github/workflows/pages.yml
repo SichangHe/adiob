@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v6
+      - name: check playback routing
+        run: node scripts/check-playback-routing.mjs
       - name: fetch private book artifacts
         env:
           PRIVATE_BOOK_ARTIFACT_REPO: SichangHe/adiob-private-artifacts
