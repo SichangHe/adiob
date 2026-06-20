@@ -64,7 +64,9 @@ The Pages UI plays `audioChunks` when present. Chunk paths can be manifest-relat
 
 The `-10` and `+10` buttons seek by seconds. Use the Speed menu to change playback tempo in the browser without regenerating audio.
 
-The reader saves per-book playback position in browser `localStorage`.
+The reader writes the current timestamp to the `t` URL parameter and saves per-book playback position in browser `localStorage`.
+
+Generated Kokoro audio is the preferred playback path on iOS and other browsers. Browser Web Speech is only a fallback when no generated audio is playable, or when `speech=1`, `systemVoice=1`, or `voice=system` is set in the URL. iOS Web Speech exposes Apple system voices, not repository-generated Kokoro voices, so it cannot reproduce the generated voice through `speechSynthesis`.
 
 `--rough-timings` in the Kokoro helper updates manifest timings from generated segment audio duration. It still uses precomputed segment boundaries from the manifest; it is not word-level forced alignment.
 

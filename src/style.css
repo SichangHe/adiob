@@ -280,6 +280,8 @@ h1 {
   min-width: 0;
   width: 100%;
   accent-color: var(--accent);
+  cursor: pointer;
+  touch-action: none;
 }
 
 #current-time {

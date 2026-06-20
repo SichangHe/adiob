@@ -29,6 +29,8 @@ const SEEK_STEP_SEC = 10;
 const VOLUME_STEP = 0.1;
 const AUDIO_CHUNK_TOLERANCE_SEC = 0.05;
 const PLAYBACK_RATE_STORAGE_KEY = "adiob.playbackRate";
+const TIMESTAMP_PARAM = "t";
+const TIMESTAMP_ALIAS_PARAM = "timestamp";
 const AUTO_SCROLL_PAUSE_MS = 15000;
 const AUTO_SCROLL_THROTTLE_MS = 900;
 const PROGRAMMATIC_SCROLL_GRACE_MS = 700;
@@ -54,6 +56,12 @@ let speechProgressTimer = null;
 let speechPlaying = false;
 let speechSeq = 0;
 let scrubDragging = false;
+let scrubDragStartSec = null;
+let scrubPointerId = null;
+let scrubTouchActive = false;
+let scrubPreviewSeq = 0;
+let lastUrlTimestampSec = null;
+let lastCommittedProgressSec = 0;
 let autoScrollPausedUntilMs = 0;
 let programmaticScrollUntilMs = 0;
 let lastAutoScrollId = "";
@@ -147,6 +155,63 @@ function requestedManifest() {
 
 function requestedBook() {
   return new URLSearchParams(window.location.search).get("book");
+}
+
+function parseTimestampSec(value) {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  const parts = trimmed.split(":").map(Number);
+  if (parts.length === 2 && parts.every(Number.isFinite)) {
+    return Math.max(0, parts[0] * 60 + parts[1]);
+  }
+  const seconds = Number(trimmed);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
+function requestedTimestampSec() {
+  const params = new URLSearchParams(window.location.search);
+  return parseTimestampSec(
+    params.get(TIMESTAMP_PARAM) ?? params.get(TIMESTAMP_ALIAS_PARAM),
+  );
+}
+
+function urlTimestampValue(valueSec) {
+  return String(Number(Math.max(0, valueSec).toFixed(3)));
+}
+
+function timestampUrl(valueSec) {
+  const url = new URL(window.location.href);
+  url.searchParams.set(TIMESTAMP_PARAM, urlTimestampValue(valueSec));
+  url.searchParams.delete(TIMESTAMP_ALIAS_PARAM);
+  return url;
+}
+
+function replaceTimestampUrl(valueSec, force = false) {
+  if (!Number.isFinite(valueSec)) {
+    return;
+  }
+  const nextSec = Math.max(0, valueSec);
+  if (!force && lastUrlTimestampSec !== null && Math.abs(nextSec - lastUrlTimestampSec) < 1) {
+    return;
+  }
+  const url = timestampUrl(nextSec);
+  if (url.href === window.location.href) {
+    lastUrlTimestampSec = nextSec;
+    return;
+  }
+  window.history.replaceState({ timestampSec: nextSec }, "", url);
+  lastUrlTimestampSec = nextSec;
+}
+
+function pushTimestampUrl(valueSec) {
+  if (!Number.isFinite(valueSec)) {
+    return;
+  }
+  const nextSec = Math.max(0, valueSec);
+  window.history.pushState({ timestampSec: nextSec }, "", timestampUrl(nextSec));
+  lastUrlTimestampSec = nextSec;
 }
 
 function rootPath(path) {
@@ -403,6 +468,11 @@ function savedProgressSec(nextBook) {
   }
 }
 
+function restoredProgressSec(nextBook) {
+  const timestampSec = requestedTimestampSec();
+  return timestampSec === null ? savedProgressSec(nextBook) : timestampSec;
+}
+
 function saveProgressSec(valueSec, explicit = false) {
   if (!book || !Number.isFinite(valueSec)) {
     return;
@@ -455,7 +525,7 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
   lastAutoScrollId = "";
   lastAutoScrollMs = 0;
   resumeAudioAfterLoad = false;
-  const restoredSec = Math.min(savedProgressSec(book), Number(book.durationSec) || 0);
+  const restoredSec = Math.min(restoredProgressSec(book), Number(book.durationSec) || 0);
   restoringProgress = restoredSec > 0;
   pendingSeekSec = restoredSec > 0 ? restoredSec : null;
   document.title = `${book.title} | adiob`;
@@ -486,7 +556,10 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
   activeId = "";
   renderPageSelect();
   setAudioControls();
-  await switchPage(pageIndexAt(restoredSec), { updateSec: restoredSec });
+  const switched = await switchPage(pageIndexAt(restoredSec), { updateSec: restoredSec });
+  if (switched && renderId === renderSeq && manifestPath === currentManifest) {
+    replaceTimestampUrl(restoredSec, true);
+  }
 }
 
 function renderReleaseAudio(track, manifestPath) {
@@ -768,13 +841,15 @@ function stopSpeech(updateButton = true) {
 function runSpeechProgress(segment) {
   const startMs = window.performance.now();
   const startSec = segment.startSec;
+  const rate = Math.max(MIN_RATE, Math.min(MAX_RATE, Number(playbackRate.value) || DEFAULT_RATE));
   const durationSec = Math.max(0.25, segment.endSec - segment.startSec);
   speechProgressTimer = window.setInterval(() => {
-    const elapsedSec = (window.performance.now() - startMs) / 1000;
+    const elapsedSec = ((window.performance.now() - startMs) / 1000) * rate;
     const fraction = Math.min(1, elapsedSec / durationSec);
     const valueSec = startSec + durationSec * fraction;
     updateProgress(valueSec);
     saveProgressSec(valueSec);
+    replaceTimestampUrl(valueSec);
   }, 250);
 }
 
@@ -889,11 +964,25 @@ async function switchPage(index, options = {}) {
   const pages = book.pages;
   const manifestPath = currentManifest;
   const nextIndex = Math.min(Math.max(0, index), pages.length - 1);
+  const nextCommitted = options.committed !== false;
   if (pageLoad?.index === nextIndex && pageLoad.manifestPath === manifestPath) {
+    if (options.updateSec !== undefined) {
+      pageLoad.updateSec = options.updateSec;
+    }
+    pageLoad.committed = nextCommitted;
+    pageLoad.previewSeq = options.previewSeq;
     return pageLoad.promise;
   }
   const page = pages[nextIndex];
   const nextSeq = ++pageSeq;
+  const nextLoad = {
+    index: nextIndex,
+    manifestPath,
+    updateSec: options.updateSec,
+    committed: nextCommitted,
+    previewSeq: options.previewSeq,
+    promise: null,
+  };
   const promise = (async () => {
     const result = await loadPageSegments(page, manifestPath);
     if (nextSeq !== pageSeq || manifestPath !== currentManifest || pages !== book?.pages) {
@@ -903,16 +992,23 @@ async function switchPage(index, options = {}) {
       renderError(result.error);
       return false;
     }
+    if (nextLoad.committed === false && nextLoad.previewSeq !== scrubPreviewSeq) {
+      return false;
+    }
     activePageIndex = nextIndex;
     activePage = { ...page, segments: result.value };
     segments.replaceChildren(...activePage.segments.map(renderSegment));
     lastSegmentsScrollTop = segments.scrollTop;
     activeId = "";
     updatePageControls();
-    updateProgress(options.updateSec ?? Math.max(page.startSec, Number(scrub.value) || 0));
+    updateProgress(
+      nextLoad.updateSec ?? Math.max(page.startSec, Number(scrub.value) || 0),
+      { committed: nextLoad.committed },
+    );
     return true;
   })();
-  pageLoad = { index: nextIndex, manifestPath, promise };
+  nextLoad.promise = promise;
+  pageLoad = nextLoad;
   try {
     return await promise;
   } finally {
@@ -922,10 +1018,14 @@ async function switchPage(index, options = {}) {
   }
 }
 
-async function ensurePageForTime(valueSec) {
+async function ensurePageForTime(valueSec, options = {}) {
   const nextIndex = pageIndexAt(valueSec);
   if (nextIndex !== activePageIndex) {
-    return switchPage(nextIndex, { updateSec: valueSec });
+    return switchPage(nextIndex, {
+      updateSec: valueSec,
+      committed: options.committed !== false,
+      previewSeq: options.previewSeq,
+    });
   }
   return true;
 }
@@ -944,7 +1044,7 @@ function renderSegment(segment, index) {
   button.addEventListener("click", (event) => {
     const targetSec = segmentClickSec(event, segment, text);
     const wasSpeechPlaying = speechPlaying;
-    seekTo(targetSec);
+    seekTo(targetSec, { historyCheckpointSec: lastCommittedProgressSec });
     if (prefersSpeechPlayback()) {
       if (!wasSpeechPlaying) {
         void playSpeechFrom(targetSec);
@@ -1010,7 +1110,10 @@ function segmentAt(valueSec) {
   );
 }
 
-function updateProgress(valueSec) {
+function updateProgress(valueSec, options = {}) {
+  if (options.committed !== false) {
+    lastCommittedProgressSec = valueSec;
+  }
   scrub.value = String(valueSec);
   currentTime.textContent = fmtTime(valueSec);
   const nextSegment = segmentAt(valueSec);
@@ -1047,11 +1150,20 @@ function maxPlaybackSec() {
   return 0;
 }
 
-function seekTo(valueSec) {
+function seekTo(valueSec, options = {}) {
   const targetSec = Math.min(Math.max(0, valueSec), maxPlaybackSec());
   const isRestoring = restoringProgress;
   const restartSpeech = speechPlaying;
   const useSpeechTiming = prefersSpeechPlayback();
+  const checkpointSec = options.historyCheckpointSec;
+  const hasCheckpoint =
+    options.updateUrl !== false &&
+    Number.isFinite(checkpointSec) &&
+    Math.abs(targetSec - checkpointSec) > 0.001;
+  scrubPreviewSeq += 1;
+  if (hasCheckpoint) {
+    replaceTimestampUrl(checkpointSec, true);
+  }
   if (restartSpeech) {
     stopSpeech(false);
   }
@@ -1082,6 +1194,11 @@ function seekTo(valueSec) {
   }
   updateProgress(targetSec);
   saveProgressSec(targetSec, true);
+  if (hasCheckpoint) {
+    pushTimestampUrl(targetSec);
+  } else if (options.updateUrl !== false) {
+    replaceTimestampUrl(targetSec, true);
+  }
   if (restartSpeech) {
     void playSpeechFrom(targetSec);
   }
@@ -1092,23 +1209,57 @@ function scrubValueSec() {
   return Number.isFinite(valueSec) ? valueSec : 0;
 }
 
+function scrubSecFromClientX(clientX) {
+  const rect = scrub.getBoundingClientRect();
+  if (rect.width <= 0) {
+    return scrubValueSec();
+  }
+  const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  return fraction * maxPlaybackSec();
+}
+
 function previewScrub(valueSec) {
   const targetSec = Math.min(Math.max(0, valueSec), maxPlaybackSec());
-  void ensurePageForTime(targetSec).then((switched) => {
-    if (switched) {
-      updateProgress(targetSec);
+  const previewSeq = ++scrubPreviewSeq;
+  void ensurePageForTime(targetSec, { committed: false, previewSeq }).then((switched) => {
+    if (switched && previewSeq === scrubPreviewSeq) {
+      updateProgress(targetSec, { committed: false });
     }
   });
-  updateProgress(targetSec);
+  updateProgress(targetSec, { committed: false });
+}
+
+function previewScrubClientX(clientX) {
+  const valueSec = scrubSecFromClientX(clientX);
+  scrub.value = String(valueSec);
+  previewScrub(valueSec);
+}
+
+function beginScrubDrag(clientX) {
+  if (!book) {
+    return false;
+  }
+  scrubDragging = true;
+  scrubDragStartSec = currentPlaybackSec();
+  previewScrubClientX(clientX);
+  return true;
 }
 
 function commitScrubSeek() {
+  scrubTouchActive = false;
+  scrubPointerId = null;
+  if (!scrubDragging) {
+    return;
+  }
+  const checkpointSec = scrubDragStartSec;
   scrubDragging = false;
-  seekTo(scrubValueSec());
+  scrubDragStartSec = null;
+  seekTo(scrubValueSec(), { historyCheckpointSec: checkpointSec });
 }
 
 function seekBy(deltaSec) {
-  seekTo(currentPlaybackSec() + deltaSec);
+  const checkpointSec = currentPlaybackSec();
+  seekTo(checkpointSec + deltaSec, { historyCheckpointSec: checkpointSec });
 }
 
 function setPlaying(isPlaying) {
@@ -1122,6 +1273,7 @@ function setPlaybackRate(options = {}) {
       ? Number(selectedRate.toFixed(1))
       : DEFAULT_RATE;
   playbackRate.value = rateValue(rate);
+  audio.defaultPlaybackRate = rate;
   audio.playbackRate = rate;
   if (options.persist) {
     savePlaybackRate(rate);
@@ -1162,6 +1314,7 @@ function togglePlayback() {
     return;
   }
   if (audio.paused) {
+    setPlaybackRate();
     audio.play();
     return;
   }
@@ -1232,6 +1385,15 @@ function handleTouchMove(event) {
   }
 }
 
+function handlePopState() {
+  const timestampSec = requestedTimestampSec();
+  if (timestampSec === null || !book) {
+    return;
+  }
+  lastUrlTimestampSec = timestampSec;
+  seekTo(timestampSec, { updateUrl: false });
+}
+
 back.addEventListener("click", () => seekBy(-SEEK_STEP_SEC));
 forward.addEventListener("click", () => seekBy(SEEK_STEP_SEC));
 play.addEventListener("click", togglePlayback);
@@ -1286,6 +1448,7 @@ document.addEventListener(
   { capture: true },
 );
 window.addEventListener("scroll", handleWindowScroll, { passive: true });
+window.addEventListener("popstate", handlePopState);
 segments.addEventListener("scroll", handleSegmentsScroll, { passive: true });
 document.addEventListener(
   "wheel",
@@ -1300,14 +1463,73 @@ scrub.addEventListener("input", () => {
     previewScrub(valueSec);
     return;
   }
-  seekTo(valueSec);
+  seekTo(valueSec, { historyCheckpointSec: lastCommittedProgressSec });
 });
 scrub.addEventListener("change", commitScrubSeek);
-scrub.addEventListener("pointerdown", () => {
-  scrubDragging = true;
+scrub.addEventListener("pointerdown", (event) => {
+  scrubPointerId = event.pointerId;
+  try {
+    scrub.setPointerCapture?.(event.pointerId);
+  } catch {
+    scrubPointerId = null;
+  }
+  if (!beginScrubDrag(event.clientX)) {
+    scrubPointerId = null;
+  }
 });
-scrub.addEventListener("pointerup", commitScrubSeek);
+scrub.addEventListener("pointermove", (event) => {
+  if (
+    !scrubDragging ||
+    (scrubPointerId !== null && scrubPointerId !== event.pointerId)
+  ) {
+    return;
+  }
+  previewScrubClientX(event.clientX);
+});
+scrub.addEventListener("pointerup", (event) => {
+  if (!scrubDragging) {
+    return;
+  }
+  previewScrubClientX(event.clientX);
+  commitScrubSeek();
+});
 scrub.addEventListener("pointercancel", commitScrubSeek);
+scrub.addEventListener("touchstart", (event) => {
+  if ("PointerEvent" in window) {
+    return;
+  }
+  const touch = event.touches[0];
+  if (!touch) {
+    return;
+  }
+  scrubTouchActive = beginScrubDrag(touch.clientX);
+});
+scrub.addEventListener(
+  "touchmove",
+  (event) => {
+    if (!scrubTouchActive) {
+      return;
+    }
+    const touch = event.touches[0];
+    if (!touch) {
+      return;
+    }
+    event.preventDefault();
+    previewScrubClientX(touch.clientX);
+  },
+  { passive: false },
+);
+scrub.addEventListener("touchend", (event) => {
+  if (!scrubTouchActive) {
+    return;
+  }
+  const touch = event.changedTouches[0];
+  if (touch) {
+    previewScrubClientX(touch.clientX);
+  }
+  commitScrubSeek();
+});
+scrub.addEventListener("touchcancel", commitScrubSeek);
 playbackRate.addEventListener("change", () => setPlaybackRate({ persist: true }));
 pageSelect.addEventListener("change", async () => {
   const index = Number(pageSelect.value);
@@ -1316,9 +1538,10 @@ pageSelect.addEventListener("change", async () => {
   }
   const nextBook = book;
   const page = nextBook.pages[index];
+  const checkpointSec = lastCommittedProgressSec;
   const switched = await switchPage(index, { updateSec: page.startSec });
   if (switched && book === nextBook) {
-    seekTo(page.startSec);
+    seekTo(page.startSec, { historyCheckpointSec: checkpointSec });
   }
 });
 prevPage.addEventListener("click", async () => {
@@ -1328,9 +1551,10 @@ prevPage.addEventListener("click", async () => {
   const nextBook = book;
   const index = Math.max(0, activePageIndex - 1);
   const page = nextBook.pages[index];
+  const checkpointSec = lastCommittedProgressSec;
   const switched = await switchPage(index, { updateSec: page.startSec });
   if (switched && book === nextBook) {
-    seekTo(page.startSec);
+    seekTo(page.startSec, { historyCheckpointSec: checkpointSec });
   }
 });
 nextPage.addEventListener("click", async () => {
@@ -1340,9 +1564,10 @@ nextPage.addEventListener("click", async () => {
   const nextBook = book;
   const index = Math.min(nextBook.pages.length - 1, activePageIndex + 1);
   const page = nextBook.pages[index];
+  const checkpointSec = lastCommittedProgressSec;
   const switched = await switchPage(index, { updateSec: page.startSec });
   if (switched && book === nextBook) {
-    seekTo(page.startSec);
+    seekTo(page.startSec, { historyCheckpointSec: checkpointSec });
   }
 });
 bookSelect.addEventListener("change", async () => {
@@ -1356,8 +1581,11 @@ bookSelect.addEventListener("change", async () => {
   }
   const url = new URL(window.location.href);
   url.searchParams.delete("manifest");
+  url.searchParams.delete(TIMESTAMP_PARAM);
+  url.searchParams.delete(TIMESTAMP_ALIAS_PARAM);
   url.searchParams.set("book", item.id);
   window.history.replaceState(null, "", url);
+  lastUrlTimestampSec = null;
   const manifestPath = item.manifest;
   currentManifest = manifestPath;
   const result = await loadJson(manifestPath);
@@ -1418,8 +1646,12 @@ audio.addEventListener("timeupdate", () => {
     pendingSeekSec = null;
   }
   saveProgressSec(valueSec);
+  replaceTimestampUrl(valueSec);
 });
-audio.addEventListener("play", () => setPlaying(true));
+audio.addEventListener("play", () => {
+  setPlaybackRate();
+  setPlaying(true);
+});
 audio.addEventListener("pause", () => setPlaying(false));
 audio.addEventListener("ended", async () => {
   if (hasChunkedAudio()) {
@@ -1438,6 +1670,7 @@ audio.addEventListener("ended", async () => {
     loadAudioChunk(nextIndex, true);
     updateProgress(targetSec);
     saveProgressSec(targetSec, true);
+    replaceTimestampUrl(targetSec, true);
     return;
   }
   if (!book?.pages?.length || activePageIndex >= book.pages.length - 1) {
