@@ -35,7 +35,13 @@ const AUTO_SCROLL_PAUSE_MS = 15000;
 const AUTO_SCROLL_THROTTLE_MS = 900;
 const PROGRAMMATIC_SCROLL_GRACE_MS = 700;
 const MOBILE_MEDIA_QUERY = "(max-width: 760px)";
-const SYSTEM_SPEECH_PARAMS = new Set(["system", "speech", "fallback"]);
+const AUDIO_MEDIA_TYPES = new Map([
+  [".aac", "audio/aac"],
+  [".m4a", "audio/mp4"],
+  [".mp3", "audio/mpeg"],
+  [".mp4", "audio/mp4"],
+  [".wav", "audio/wav"],
+]);
 
 let book = null;
 let catalog = null;
@@ -235,6 +241,37 @@ function assetPath(path, manifestPath = currentManifest) {
     return rootPath(path);
   }
   return new URL(path, new URL(manifestPath, window.location.href)).href;
+}
+
+function audioMediaType(path) {
+  const pathname = new URL(path, window.location.href).pathname.toLowerCase();
+  const dot = pathname.lastIndexOf(".");
+  return dot >= 0 ? AUDIO_MEDIA_TYPES.get(pathname.slice(dot)) : undefined;
+}
+
+function loadAudioSource(path) {
+  const source = document.createElement("source");
+  source.src = path;
+  const type = audioMediaType(path);
+  if (type) {
+    source.type = type;
+  }
+  source.addEventListener("error", () => {
+    if (audio.dataset.src === path) {
+      handleAudioError();
+    }
+  });
+  audio.replaceChildren(source);
+  audio.removeAttribute("src");
+  audio.dataset.src = path;
+  audio.load();
+}
+
+function clearAudioSource() {
+  audio.replaceChildren();
+  audio.removeAttribute("src");
+  delete audio.dataset.src;
+  audio.load();
 }
 
 function normalizeSegment(segment, index) {
@@ -514,6 +551,9 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
     ...nextBook,
     pages: pageResult.value,
     audioChunks,
+    declaredAudio: Boolean(
+      audioChunks.length || nextBook.releaseAudio?.url || nextBook.audio,
+    ),
     durationSec: Number.isFinite(manifestDurationSec)
       ? manifestDurationSec
       : inferredDurationSec,
@@ -538,16 +578,13 @@ async function renderBook(nextBook, manifestPath = currentManifest) {
   cover.alt = `${book.title} cover`;
   audio.dataset.releaseFallbackUsed = "0";
   if (prefersSpeechPlayback()) {
-    audio.removeAttribute("src");
-    audio.load();
+    clearAudioSource();
   } else if (hasChunkedAudio()) {
     loadAudioChunk(audioChunkIndexAt(restoredSec));
   } else if (hasAudio()) {
-    audio.src = assetPath(book.releaseAudio?.url || book.audio, manifestPath);
-    audio.load();
+    loadAudioSource(assetPath(book.releaseAudio?.url || book.audio, manifestPath));
   } else {
-    audio.removeAttribute("src");
-    audio.load();
+    clearAudioSource();
   }
   setPlaybackRate();
   renderReleaseAudio(book.releaseAudio, manifestPath);
@@ -581,18 +618,12 @@ function hasFallbackAudio() {
   return Boolean(book && (book.releaseAudio?.url || book.audio));
 }
 
-function hasAudio() {
-  return Boolean(book && !audioUnavailable && (hasChunkedAudio() || hasFallbackAudio()));
+function hasDeclaredAudio() {
+  return Boolean(book?.declaredAudio);
 }
 
-function systemSpeechSelected() {
-  const params = new URLSearchParams(window.location.search);
-  const voice = params.get("voice")?.toLowerCase();
-  return (
-    params.get("speech") === "1" ||
-    params.get("systemVoice") === "1" ||
-    (voice !== undefined && SYSTEM_SPEECH_PARAMS.has(voice))
-  );
+function hasAudio() {
+  return Boolean(!audioUnavailable && (hasChunkedAudio() || hasFallbackAudio()));
 }
 
 function canUseSpeechFallback() {
@@ -609,7 +640,7 @@ function hasSpeech() {
     book &&
       "speechSynthesis" in window &&
       canUseSpeechFallback() &&
-      !hasAudio(),
+      !hasDeclaredAudio(),
   );
 }
 
@@ -731,15 +762,14 @@ function loadAudioChunk(index, playAfterLoad = false) {
   const chunk = chunks[nextIndex];
   const nextSrc = assetPath(chunk.path);
   resumeAudioAfterLoad = playAfterLoad;
-  if (activeAudioChunkIndex === nextIndex && audio.getAttribute("src") === nextSrc) {
+  if (activeAudioChunkIndex === nextIndex && audio.dataset.src === nextSrc) {
     if (playAfterLoad && audio.readyState >= 1) {
       void audio.play();
     }
     return true;
   }
   activeAudioChunkIndex = nextIndex;
-  audio.src = nextSrc;
-  audio.load();
+  loadAudioSource(nextSrc);
   setPlaybackRate();
   return true;
 }
@@ -769,7 +799,7 @@ function currentPlaybackSec() {
   if (pendingSeekSec !== null) {
     return pendingSeekSec;
   }
-  if (speechPlaying || (systemSpeechSelected() && hasSpeech())) {
+  if (speechPlaying) {
     return Number.isFinite(scrubSec) ? scrubSec : 0;
   }
   if (hasAudio() && audio.readyState >= 1 && Number.isFinite(audio.currentTime)) {
@@ -788,12 +818,10 @@ function fallbackFromChunkError() {
   resumeAudioAfterLoad = false;
   pendingSeekSec = targetSec;
   if (hasFallbackAudio()) {
-    audio.src = assetPath(book.releaseAudio?.url || book.audio);
-    audio.load();
+    loadAudioSource(assetPath(book.releaseAudio?.url || book.audio));
     setPlaybackRate();
   } else {
-    audio.removeAttribute("src");
-    audio.load();
+    clearAudioSource();
     pendingSeekSec = null;
     updateProgress(targetSec);
   }
@@ -813,13 +841,30 @@ function disableBrokenAudioFallback(valueSec = currentPlaybackSec()) {
   activeAudioChunkIndex = -1;
   resumeAudioAfterLoad = false;
   pendingSeekSec = null;
-  audio.removeAttribute("src");
-  audio.load();
+  clearAudioSource();
   updateProgress(valueSec);
   if (!speechPlaying) {
     setPlaying(false);
   }
   setAudioControls();
+}
+
+function handleAudioError() {
+  if (prefersSpeechPlayback()) {
+    if (!speechPlaying) {
+      disableBrokenAudioFallback();
+    }
+    return;
+  }
+  if (fallbackFromChunkError()) {
+    return;
+  }
+  if (!book?.releaseAudio?.url || !book.audio || audio.dataset.releaseFallbackUsed === "1") {
+    disableBrokenAudioFallback();
+    return;
+  }
+  audio.dataset.releaseFallbackUsed = "1";
+  loadAudioSource(assetPath(book.audio));
 }
 
 function stopSpeech(updateButton = true) {
@@ -1623,22 +1668,9 @@ audio.addEventListener("loadedmetadata", () => {
   }
 });
 audio.addEventListener("error", () => {
-  if (prefersSpeechPlayback()) {
-    if (!speechPlaying) {
-      disableBrokenAudioFallback();
-    }
-    return;
+  if (!audio.querySelector("source")) {
+    handleAudioError();
   }
-  if (fallbackFromChunkError()) {
-    return;
-  }
-  if (!book?.releaseAudio?.url || !book.audio || audio.dataset.releaseFallbackUsed === "1") {
-    disableBrokenAudioFallback();
-    return;
-  }
-  audio.dataset.releaseFallbackUsed = "1";
-  audio.src = assetPath(book.audio);
-  audio.load();
 });
 audio.addEventListener("timeupdate", () => {
   const valueSec = audioGlobalTime();
