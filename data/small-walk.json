@@ -11,18 +11,18 @@
     {
       "id": "s001",
       "startSec": 0.0,
-      "endSec": 4.613,
+      "endSec": 4.225,
       "text": "Morning light found Ada at the station with a notebook and a thermos."
     },
     {
       "id": "s002",
-      "startSec": 4.613,
-      "endSec": 9.894,
+      "startSec": 4.225,
+      "endSec": 9.325,
       "text": "She pressed play, and the next paragraph began exactly where her walk left off."
     },
     {
       "id": "s003",
-      "startSec": 9.894,
+      "startSec": 9.325,
       "endSec": 15.175,
       "text": "This tiny sample is original demo text for a public static audiobook prototype."
     }
@@ -32,6 +32,11 @@
     "tool": "kokoro",
     "voice": "af_heart",
     "lang": "a",
-    "timing": "rough text-length allocation"
+    "timing": "generated segment audio duration"
+  },
+  "releaseAudio": {
+    "url": "https://github.com/SichangHe/adiob/releases/download/audio-small-walk-v1/sample.m4a",
+    "tag": "audio-small-walk-v1",
+    "asset": "sample.m4a"
   }
 }
