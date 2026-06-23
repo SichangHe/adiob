@@ -4,3 +4,35 @@
   - source: `/ssd1/sichangheagent/adiob/data/small-walk.json`
   - status: cleaned
   - note: body text already contiguous; no segment text edits were needed
+- `2026-06-21` private catalog except `the-contrarian`
+  - source: `/ssd1/sichangheagent/adiob/../adiob-private-artifacts/books.json`
+  - status: cleaned
+  - output: `cleaned-texts/<book-id>.txt` in the private artifact repo
+  - cleanup applied to every listed book: front matter/table-of-contents removal, body-range trimming, paragraph normalization, line-break hyphen repair, page-number removal, and back-matter/index removal where present
+  - `business-notes-writing-personal-notes-that-build-professional-relationships`
+    - removed publisher/catalog/front matter and rear jacket/ad copy
+  - `clean-code-a-handbook-of-agile-software-craftsmanship-robert-c-martin`
+    - removed front matter, table of contents, cover copy, and index
+  - `design-patterns-elements-of-reusable-object-oriented-software-erich-gamma-richard-helm-john-vlissides-ralph-johnson`
+    - removed front matter, table of contents, bibliography, and index
+  - `designing-interfaces-second-edition-jenifer-tidwell`
+    - removed introduction/preface/table of contents and index/about/colophon
+  - `domain-driven-design-tackling-complexity-in-the-heart-of-software-eric-evans`
+    - removed title/front matter/table of contents and appendix
+  - `man-s-search-for-meaning`
+    - removed publisher/catalog/front matter and about-author back matter
+  - `never-split-the-difference-negotiating-as-if-your-life-depended-on-it-chris-voss-and-tahl-raz-harpercollins`
+    - removed table of contents and notes/index/publisher back matter
+  - `outliers`
+    - removed title/copyright/front matter and notes/acknowledgments/index
+  - `the-elements-of-style`
+    - removed title page and table of contents
+  - `understanding-power`
+    - removed title/front matter/table of contents and index
+    - blocker: source text/PDF contains the table-of-contents listing for Chapter One but no Chapter One body text; cleaned body starts at the first available body text, Chapter Two
+  - `vdoc-pub-moral-mazes`
+    - removed title/front matter/table of contents and notes/index/back matter
+  - `vdoc-pub-moral-mazes-pdf`
+    - removed title/front matter/table of contents and notes/index/back matter
+  - `walden`
+    - removed biographical front matter and QCEnglish disclaimer back matter
