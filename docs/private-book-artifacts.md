@@ -10,7 +10,7 @@ private book artifacts
       - text transcript pages are copied into the Pages artifact
       - generated audio stays private
   - `top-level-english-files.json`
-    - private audited list of top-level English source filenames
+    - private audited list of source paths relative to the local book directory
   - `texts/<book>.txt`
     - extracted top-level English book text
   - `generated/<book>/manifest.json`
@@ -25,8 +25,13 @@ private book artifacts
     - chunk files are not copied into Pages
   - `generated/<book>/cover.svg`
     - demo cover for selected books
-- export local top-level English files
-  - `python3 scripts/export-private-book-artifacts.py --book-dir ../book --private-root ../adiob-private-artifacts --confirm-private-repo-output`
+- export audited local book files
+  - `python3 scripts/export-private-book-artifacts.py --book-dir ../book --private-root ../adiob-private-artifacts --append --confirm-private-repo-output`
+  - PDF, EPUB, DOCX, and MOBI inputs are supported
+  - scanned PDFs use OCRmyPDF with Tesseract when no usable text layer exists
+  - `--refresh-source <relative-path>` reruns OCR or extraction only for an unreleased append-mode entry
+  - MOBI extraction requires Calibre's `ebook-convert`
+  - catalog entries may set `language` and `voice` for per-book Kokoro rendering
 - Pages fetch
   - workflow secret
     - `PRIVATE_BOOK_ARTIFACTS_TOKEN`

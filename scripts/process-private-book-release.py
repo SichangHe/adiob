@@ -38,8 +38,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--release-tag", default=DEFAULT_RELEASE_TAG)
     parser.add_argument("--chunk-segments", type=int, default=DEFAULT_CHUNK_SEGMENTS)
     parser.add_argument("--chunk-ext", default=DEFAULT_CHUNK_EXT)
-    parser.add_argument("--voice", default="af_heart")
-    parser.add_argument("--lang", default="a")
+    parser.add_argument("--voice")
+    parser.add_argument("--lang")
     parser.add_argument("--max-tts-chars", type=int, default=DEFAULT_MAX_TTS_CHARS)
     parser.add_argument("--max-chars", type=int, default=0)
     parser.add_argument("--start-line", type=int)
@@ -225,7 +225,13 @@ def run_command(cmd: list[str], dry_run: bool) -> None:
     subprocess.run(cmd, cwd=repo_root(), check=True)
 
 
-def generate_audio(args: argparse.Namespace, manifest: Path, book_id: str) -> None:
+def generate_audio(
+    args: argparse.Namespace,
+    manifest: Path,
+    book: dict[str, Any],
+) -> None:
+    book_id = str(book["id"])
+    voice, lang = book_voice_lang(args, book)
     rel_manifest = Path(os.path.relpath(manifest, repo_root()))
     rel_chunk_dir = Path(os.path.relpath(local_book_dir(args, book_id) / "chunks", repo_root()))
     cmd = [
@@ -245,9 +251,9 @@ def generate_audio(args: argparse.Namespace, manifest: Path, book_id: str) -> No
         "--chunk-ext",
         chunk_ext(args.chunk_ext),
         "--voice",
-        args.voice,
+        voice,
         "--lang",
-        args.lang,
+        lang,
         "--max-tts-chars",
         str(args.max_tts_chars),
         "--confirm-local-owned-use",
@@ -255,6 +261,15 @@ def generate_audio(args: argparse.Namespace, manifest: Path, book_id: str) -> No
         "--batch-segments",
     ]
     run_command(cmd, args.dry_run)
+
+
+def book_voice_lang(
+    args: argparse.Namespace, book: dict[str, Any]
+) -> tuple[str, str]:
+    return (
+        str(args.voice or book.get("voice") or "af_heart"),
+        str(args.lang or book.get("language") or "a"),
+    )
 
 
 def canonical_repo(repo: str, dry_run: bool) -> str:
@@ -492,7 +507,7 @@ def process_book(
         return
     text_path = require_catalog_text(private_root, book)
     manifest_path = build_local_manifest(builder, args, book, text_path)
-    generate_audio(args, manifest_path, book_id)
+    generate_audio(args, manifest_path, book)
     if args.dry_run:
         return
     manifest = read_json(manifest_path)

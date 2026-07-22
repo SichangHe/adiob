@@ -15,8 +15,9 @@ from types import ModuleType
 from typing import Any
 
 
-SUPPORTED_SUFFIXES = {".pdf", ".epub"}
+SUPPORTED_SUFFIXES = {".pdf", ".epub", ".docx", ".mobi"}
 DEFAULT_INCLUDE_LIST = "top-level-english-files.json"
+SAFE_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
 PUBLIC_DEMOS = {
     "The Elements of Style, William Strunk, Jr..pdf": {
         "id": "the-elements-of-style",
@@ -33,6 +34,14 @@ PUBLIC_DEMOS = {
         "license": "Public-domain source text. Takedown requests and rights concerns can be sent to the repository owner.",
     },
 }
+SOURCE_METADATA = {
+    "The Art of Computer Programming.pdf": {"ocrLanguage": "chi_sim+eng"},
+    "弗兰克尔自传：活出生命的意义 - 维克多·弗兰克尔（中亚）.mobi": {
+        "language": "z",
+        "voice": "zf_xiaobei",
+    },
+    "苏东坡传.docx": {"language": "z", "voice": "zf_xiaobei"},
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,6 +51,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--book-dir", required=True, type=Path)
     parser.add_argument("--private-root", required=True, type=Path)
     parser.add_argument("--include-list", type=Path)
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Keep existing catalog entries and export only newly audited sources.",
+    )
+    parser.add_argument(
+        "--refresh-source",
+        action="append",
+        default=[],
+        help="Re-extract an existing append-mode source that has no generated release.",
+    )
     parser.add_argument("--local-demo-root", type=Path, default=Path("local/owned-books"))
     parser.add_argument(
         "--confirm-private-repo-output",
@@ -99,6 +119,36 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     write_file(path, json.dumps(value, indent=2, ensure_ascii=False) + "\n")
 
 
+def read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def append_catalog(path: Path) -> dict[str, Any]:
+    catalog = read_json(path)
+    if not isinstance(catalog, dict):
+        raise SystemExit("existing private catalog must be a JSON object")
+    books = catalog.get("books")
+    failures = catalog.get("failures")
+    if not isinstance(books, list) or not all(isinstance(book, dict) for book in books):
+        raise SystemExit("existing private catalog must contain only object books")
+    if not isinstance(failures, list) or not all(
+        isinstance(failure, dict) for failure in failures
+    ):
+        raise SystemExit("existing private catalog must contain only object failures")
+    return catalog
+
+
+def refresh_book_id(book: dict[str, Any], source_file: str) -> str:
+    if book.get("generated") is not None:
+        raise SystemExit(f"refusing to refresh generated source: {source_file}")
+    book_id = book.get("id")
+    if not isinstance(book_id, str) or SAFE_ID.fullmatch(book_id) is None:
+        raise SystemExit(f"refusing unsafe refresh book id: {source_file}")
+    if book.get("text") != f"texts/{book_id}.txt":
+        raise SystemExit(f"refusing unsafe refresh text path: {source_file}")
+    return book_id
+
+
 def slug(text: str) -> str:
     value = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return value or "book"
@@ -118,34 +168,39 @@ def include_list_path(private_root: Path, include_list: Path | None) -> Path:
 
 def read_include_list(path: Path) -> list[str]:
     if not path.is_file():
-        raise SystemExit(f"missing private top-level English include list: {path}")
+        raise SystemExit(f"missing private audited book include list: {path}")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise SystemExit("private include list must be a JSON string array")
+    if len(value) != len(set(value)):
+        raise SystemExit("private include list contains duplicate paths")
     return value
 
 
-def top_level_english_files(book_dir: Path, names: list[str]) -> list[Path]:
+def audited_book_files(book_dir: Path, names: list[str]) -> list[Path]:
     files = []
     for name in names:
+        relative = Path(name)
         if (
-            Path(name).name != name
-            or posixpath.basename(name) != name
-            or name in {"", ".", ".."}
+            name in {"", ".", ".."}
+            or relative.is_absolute()
+            or posixpath.normpath(name) != name
+            or not (book_dir / relative)
+            .resolve(strict=False)
+            .is_relative_to(book_dir.resolve())
         ):
-            raise SystemExit(f"include list entry must be a top-level filename: {name}")
-        path = book_dir / name
+            raise SystemExit(f"include list entry must be a safe relative path: {name}")
+        path = book_dir / relative
         if not path.is_file():
-            raise SystemExit(f"audited top-level English file is missing: {name}")
+            raise SystemExit(f"audited book file is missing: {name}")
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
-            raise SystemExit(f"unsupported audited English file: {name}")
+            raise SystemExit(f"unsupported audited book file: {name}")
         files.append(path)
     return files
 
 
-def unique_id(path: Path, used: set[str]) -> str:
-    known = PUBLIC_DEMOS.get(path.name)
-    base = known["id"] if known else slug(path.stem)
+def unique_id(path: Path, used: set[str], known_id: str | None = None) -> str:
+    base = known_id or slug(path.stem)
     candidate = base
     if candidate in used:
         candidate = f"{base}-{path.suffix.lower().lstrip('.')}"
@@ -186,15 +241,55 @@ def main() -> None:
         raise SystemExit(f"book directory does not exist: {book_dir}")
     private_root = require_private_root(args.private_root)
     include_names = read_include_list(include_list_path(private_root, args.include_list))
+    refresh_sources = set(args.refresh_source)
+    if refresh_sources and not args.append:
+        raise SystemExit("--refresh-source requires --append")
+    if not refresh_sources.issubset(include_names):
+        raise SystemExit("--refresh-source must name audited include-list paths")
     extractor = load_extractor()
-    used: set[str] = set()
-    books = []
-    failures = []
-    for source in top_level_english_files(book_dir, include_names):
-        book_id = unique_id(source, used)
-        known = PUBLIC_DEMOS.get(source.name, {})
+    catalog_path = private_root / "books.json"
+    catalog = (
+        append_catalog(catalog_path)
+        if args.append and catalog_path.is_file()
+        else {}
+    )
+    existing_books = catalog.get("books", [])
+    existing_failures = catalog.get("failures", [])
+    books = list(existing_books)
+    failures = [
+        failure
+        for failure in existing_failures
+        if failure.get("sourceFile") not in include_names
+    ]
+    used = {
+        str(book["id"])
+        for book in books
+        if isinstance(book.get("id"), str)
+    }
+    existing_by_source = {
+        str(book["sourceFile"]): book
+        for book in books
+        if isinstance(book.get("sourceFile"), str)
+    }
+    for source in audited_book_files(book_dir, include_names):
+        source_file = source.relative_to(book_dir).as_posix()
+        existing_book = existing_by_source.get(source_file)
+        if existing_book is not None and source_file not in refresh_sources:
+            print(f"kept existing {source_file}")
+            continue
+        known = PUBLIC_DEMOS.get(source_file, {})
+        metadata = SOURCE_METADATA.get(source_file, {})
+        if existing_book is not None:
+            book_id = refresh_book_id(existing_book, source_file)
+        else:
+            book_id = unique_id(source, used, known.get("id"))
         try:
-            text = extractor.normalize_text(extractor.extract_text(source))
+            text = extractor.normalize_text(
+                extractor.extract_text(
+                    source,
+                    str(metadata.get("ocrLanguage") or "eng"),
+                )
+            )
             if len(text.strip()) < 100:
                 raise ValueError("extracted text is unexpectedly short")
         except SystemExit as exc:
@@ -207,7 +302,7 @@ def main() -> None:
             failures.append(
                 {
                     "id": book_id,
-                    "sourceFile": source.name,
+                    "sourceFile": source_file,
                     "error": error,
                 }
             )
@@ -215,35 +310,39 @@ def main() -> None:
             continue
         text_path = private_root / "texts" / f"{book_id}.txt"
         write_file(text_path, text)
+        if existing_book is not None:
+            existing_book.update(metadata)
+            print(f"refreshed {source.name} -> texts/{book_id}.txt")
+            continue
         generated = None
         publish = bool(known)
         if publish:
             generated = copy_demo(private_root, book_id, known["demo"], args.local_demo_root)
             if generated is None:
                 raise SystemExit(f"missing generated demo for publishable book: {source.name}")
-        books.append(
-            {
+        book = {
                 "id": book_id,
                 "title": known.get("title") or title_from_stem(source.stem),
                 "author": known.get("author") or "",
-                "sourceFile": source.name,
+                "sourceFile": source_file,
                 "text": f"texts/{book_id}.txt",
                 "publish": publish,
                 "license": known.get("license")
                 or "Private text artifact. Do not publish without explicit review.",
                 "generated": generated,
             }
-        )
+        book.update(metadata)
+        books.append(book)
         print(f"exported {source.name} -> texts/{book_id}.txt")
-    write_json(
-        private_root / "books.json",
+    catalog.update(
         {
             "schema": 1,
-            "source": "Top-level English files from the local book directory.",
+            "source": "Audited files from the local book directory.",
             "books": books,
             "failures": failures,
-        },
+        }
     )
+    write_json(private_root / "books.json", catalog)
     print(f"wrote {private_root / 'books.json'}")
 
 

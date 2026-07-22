@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--ocr-language", default="eng")
     parser.add_argument(
         "--confirm-local-owned-use",
         action="store_true",
@@ -140,7 +141,16 @@ def normalize_text(text: str) -> str:
     return text.strip() + "\n"
 
 
-def extract_pdf(source: Path) -> str:
+def usable_pdf_text(text: str) -> bool:
+    normalized = normalize_text(text)
+    return (
+        len(normalized.strip()) >= 100
+        and sum(character.isalpha() for character in normalized) >= 80
+        and len(re.findall(r"\w{2,}", normalized)) >= 25
+    )
+
+
+def extract_pdf(source: Path, ocr_language: str = "eng") -> str:
     if shutil.which("pdftotext") is None:
         raise SystemExit("pdftotext is required for PDF extraction")
     result = subprocess.run(
@@ -149,7 +159,38 @@ def extract_pdf(source: Path) -> str:
         capture_output=True,
         text=True,
     )
-    return result.stdout
+    if usable_pdf_text(result.stdout):
+        return result.stdout
+    if shutil.which("ocrmypdf") is None or shutil.which("tesseract") is None:
+        raise SystemExit(
+            "PDF has no usable text layer; OCR requires `ocrmypdf` and `tesseract`"
+        )
+    with tempfile.TemporaryDirectory(prefix="adiob-ocr-") as tmp:
+        ocr_pdf = Path(tmp) / "book.pdf"
+        subprocess.run(
+            [
+                "ocrmypdf",
+                "--force-ocr",
+                "--deskew",
+                "--rotate-pages",
+                "--output-type",
+                "pdf",
+                "--language",
+                ocr_language,
+                str(source),
+                str(ocr_pdf),
+            ],
+            check=True,
+        )
+        ocr_text = subprocess.run(
+            ["pdftotext", "-enc", "UTF-8", "-layout", str(ocr_pdf), "-"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        if not usable_pdf_text(ocr_text):
+            raise SystemExit("OCR did not produce usable PDF text")
+        return ocr_text
 
 
 def opf_path(epub: zipfile.ZipFile) -> str:
@@ -229,10 +270,10 @@ def extract_mobi(source: Path) -> str:
         return out.read_text(encoding="utf-8", errors="replace")
 
 
-def extract_text(source: Path) -> str:
+def extract_text(source: Path, ocr_language: str = "eng") -> str:
     suffix = source.suffix.lower()
     if suffix == ".pdf":
-        return extract_pdf(source)
+        return extract_pdf(source, ocr_language)
     if suffix == ".epub":
         return extract_epub(source)
     if suffix == ".docx":
@@ -251,7 +292,7 @@ def main() -> None:
     source = root_path(args.source)
     if not source.is_file():
         raise SystemExit(f"source file does not exist: {source}")
-    text = normalize_text(extract_text(source))
+    text = normalize_text(extract_text(source, args.ocr_language))
     if len(text.strip()) < 100:
         raise SystemExit("extracted text is unexpectedly short")
     out = require_boundary(args.out)
