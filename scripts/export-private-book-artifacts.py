@@ -35,12 +35,46 @@ PUBLIC_DEMOS = {
     },
 }
 SOURCE_METADATA = {
-    "The Art of Computer Programming.pdf": {"ocrLanguage": "chi_sim+eng"},
+    "DMV/California_Driver_Handbook_10-01-24-Passed-accessible-DL-600-Rev.-1-2024.pdf": {
+        "title": "California Driver's Handbook",
+        "author": "California Department of Motor Vehicles",
+    },
+    "DMV/Words_and_Phrases_for_Class_C_Driving_Tests_DL-80-EN-R3-2022-Access-Secured.pdf": {
+        "title": "Words and Phrases for Class C Driving Tests",
+        "author": "California Department of Motor Vehicles",
+    },
+    "DMV/road_sign_chart_DL-37-R11-2009-English-Secured.pdf": {
+        "title": "California Road Sign Chart",
+        "author": "California Department of Motor Vehicles",
+    },
+    "Elon Musk - PDF Room.pdf": {"title": "Elon Musk", "author": "Walter Isaacson"},
+    "The Art of Computer Programming.pdf": {
+        "title": "The Art of Computer Programming, Volume 1: Fundamental Algorithms",
+        "author": "Donald E. Knuth",
+        "language": "z",
+        "voice": "zf_xiaobei",
+        "ocrLanguage": "chi_sim+eng",
+    },
+    "The Intelligent Investor - BENJAMIN GRAHAM.pdf": {
+        "title": "The Intelligent Investor",
+        "author": "Benjamin Graham",
+    },
+    "dokumen.pub_the-man-who-solved-the-market-how-jim-simons-launched-the-quant-revolution-hardcovernbsped-073521798x-9780735217980.epub": {
+        "title": "The Man Who Solved the Market",
+        "author": "Gregory Zuckerman",
+    },
     "弗兰克尔自传：活出生命的意义 - 维克多·弗兰克尔（中亚）.mobi": {
+        "title": "弗兰克尔自传：活出生命的意义",
+        "author": "维克多·弗兰克尔",
         "language": "z",
         "voice": "zf_xiaobei",
     },
-    "苏东坡传.docx": {"language": "z", "voice": "zf_xiaobei"},
+    "苏东坡传.docx": {
+        "title": "苏东坡传",
+        "author": "林语堂",
+        "language": "z",
+        "voice": "zf_xiaobei",
+    },
 }
 
 
@@ -275,6 +309,7 @@ def main() -> None:
         source_file = source.relative_to(book_dir).as_posix()
         existing_book = existing_by_source.get(source_file)
         if existing_book is not None and source_file not in refresh_sources:
+            existing_book.update(SOURCE_METADATA.get(source_file, {}))
             print(f"kept existing {source_file}")
             continue
         known = PUBLIC_DEMOS.get(source_file, {})

@@ -23,10 +23,25 @@ class BookCut:
 
 
 CUTS = {
+    "book": BookCut(
+        151,
+        1081,
+        "Removed publication data, publisher foreword, contents, and third-party promotional back matter; retained the autobiography and author's postscript.",
+    ),
+    "book-docx": BookCut(
+        59,
+        2763,
+        "Removed title/front matter; retained all twenty-eight biography chapters through the subject's death.",
+    ),
     "business-notes-writing-personal-notes-that-build-professional-relationships": BookCut(
         250,
         5265,
         "Removed publisher/catalog/front matter and rear jacket/ad copy; retained body chapters and reference library.",
+    ),
+    "california-driver-handbook-10-01-24-passed-accessible-dl-600-rev-1-2024": BookCut(
+        142,
+        3060,
+        "Removed cover, letter, copyright notice, contents, and rear advertisements; retained all fourteen handbook sections through the glossary.",
     ),
     "clean-code-a-handbook-of-agile-software-craftsmanship-robert-c-martin": BookCut(
         843,
@@ -48,6 +63,16 @@ CUTS = {
         15005,
         "Removed title/front matter/table of contents and appendix; retained chapters and epilogues.",
     ),
+    "dokumen-pub-the-man-who-solved-the-market-how-jim-simons-launched-the-quant-revolution-hardcovernbsped-073521798x-9780735217980": BookCut(
+        275,
+        4367,
+        "Removed publication/front matter, contents, photograph captions, acknowledgments, appendices, notes, and index; retained the introduction through epilogue.",
+    ),
+    "elon-musk-pdf-room": BookCut(
+        11,
+        16934,
+        "Removed acknowledgments, notes, illustration credits, and index; retained the prologue and complete narrative.",
+    ),
     "man-s-search-for-meaning": BookCut(
         283,
         3560,
@@ -68,10 +93,20 @@ CUTS = {
         1765,
         "Removed title page and table of contents; retained all chapter body text through the end marker.",
     ),
+    "the-intelligent-investor-benjamin-graham": BookCut(
+        334,
+        22092,
+        "Removed publication/front matter, contents, preface, appendixes, endnotes, acknowledgments, and index; retained the introduction and twenty chapters.",
+    ),
     "understanding-power": BookCut(
         348,
         17637,
         "Removed title/front matter/table of contents and index; retained all available body text. Source lacks actual Chapter One text.",
+    ),
+    "road-sign-chart-dl-37-r11-2009-english-secured": BookCut(
+        8,
+        48,
+        "Removed document headers and revision footers; retained all warning, regulatory, construction, and guide sign labels.",
     ),
     "vdoc-pub-moral-mazes": BookCut(
         129,
@@ -88,11 +123,17 @@ CUTS = {
         9263,
         "Removed biographical front matter and QCEnglish disclaimer back matter; retained all chapters.",
     ),
+    "words-and-phrases-for-class-c-driving-tests-dl-80-en-r3-2022-access-secured": BookCut(
+        1,
+        65,
+        "Retained all seven driving-test sections and removed the duplicate revision footer.",
+    ),
 }
 
 PAGE_NUMBER = re.compile(r"^(?:\d+|[ivxlcdm]+)$", re.IGNORECASE)
 SPLIT_INITIAL_CAP = re.compile(r"\b([A-Z])\s+([A-Z]{4,})\b")
 INLINE_ARTIFACTS = (
+    re.compile(r"\s*www\.fx1618\.com\s*", re.IGNORECASE),
     re.compile(r"\s*Download from Wow! eBook <www\.wowebook\.com>\s*"),
     re.compile(r"\s*\[ Team LiB \]\s*"),
     re.compile(r"\bThis page intentionally left blank\b", re.IGNORECASE),
@@ -148,6 +189,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--private-root", type=Path, default=DEFAULT_PRIVATE_ROOT)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--book-id",
+        action="append",
+        default=[],
+        help="Clean only this catalog book ID; may be repeated.",
+    )
     return parser.parse_args()
 
 
@@ -277,12 +324,25 @@ def main() -> None:
     books = catalog.get("books")
     if not isinstance(books, list):
         raise SystemExit("private catalog must contain a books list")
+    selected = set(args.book_id)
+    available = {
+        book.get("id")
+        for book in books
+        if isinstance(book, dict)
+        and isinstance(book.get("id"), str)
+        and book.get("id") != CONTRARIAN_ID
+    }
+    missing = selected - available
+    if missing:
+        raise SystemExit(f"unknown catalog book ID: {sorted(missing)[0]}")
     outputs: list[tuple[dict[str, Any], str, Path, str]] = []
     for book in books:
         if not isinstance(book, dict):
             continue
         book_id = book.get("id")
         if not isinstance(book_id, str) or book_id == CONTRARIAN_ID:
+            continue
+        if selected and book_id not in selected:
             continue
         cut = CUTS.get(book_id)
         if cut is None:
