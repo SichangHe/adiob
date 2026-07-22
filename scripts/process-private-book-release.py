@@ -237,10 +237,7 @@ def generate_audio(
     cmd = [
         "uv",
         "run",
-        "--with",
-        "kokoro>=0.9.4",
-        "--with",
-        "soundfile",
+        *tts_dependency_args(lang),
         "scripts/generate-kokoro-audio.py",
         "--manifest",
         rel_manifest.as_posix(),
@@ -261,6 +258,13 @@ def generate_audio(
         "--batch-segments",
     ]
     run_command(cmd, args.dry_run)
+
+
+def tts_dependency_args(lang: str) -> list[str]:
+    dependencies = ["kokoro>=0.9.4", "soundfile"]
+    if lang == "z":
+        dependencies.append("misaki[zh]>=0.9.4")
+    return [item for dependency in dependencies for item in ("--with", dependency)]
 
 
 def book_voice_lang(

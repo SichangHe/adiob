@@ -204,6 +204,10 @@ def check_release_voice(module: ModuleType) -> None:
         "a",
     ):
         raise AssertionError("command-line voice and language did not override catalog")
+    if "misaki[zh]>=0.9.4" not in module.tts_dependency_args("z"):
+        raise AssertionError("Chinese TTS dependencies were not selected")
+    if "misaki[zh]>=0.9.4" in module.tts_dependency_args("a"):
+        raise AssertionError("Chinese TTS dependencies leaked into English generation")
 
 
 def main() -> None:
