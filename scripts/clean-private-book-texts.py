@@ -98,6 +98,11 @@ CUTS = {
         22092,
         "Removed publication/front matter, contents, preface, appendixes, endnotes, acknowledgments, and index; retained the introduction and twenty chapters.",
     ),
+    "the-art-of-computer-programming": BookCut(
+        165,
+        33826,
+        "Removed cover, damaged contents pages, appendixes dominated by formulas/tables, and bilingual name/index table; retained all three chapters.",
+    ),
     "understanding-power": BookCut(
         348,
         17637,
@@ -247,6 +252,7 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
 def clean_line(text: str) -> str:
     text = text.replace("\xad", "")
     text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"(?<=[\u3400-\u9fff]) (?=[\u3400-\u9fff])", "", text)
     return SPLIT_INITIAL_CAP.sub(r"\1\2", text)
 
 
