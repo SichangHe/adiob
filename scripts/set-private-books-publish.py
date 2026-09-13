@@ -12,6 +12,7 @@ from typing import Any
 
 
 DEFAULT_PRIVATE_ROOT = Path("../adiob-private-artifacts")
+PRIVATE_CATALOGS = ("books.json", "internal-books.json")
 
 
 def parse_args() -> argparse.Namespace:
@@ -120,23 +121,41 @@ def catalog_books(catalog: dict[str, Any]) -> list[dict[str, Any]]:
 def main() -> None:
     args = parse_args()
     private_root = require_private_root(args.private_root)
-    catalog_path = private_root / "books.json"
-    if not catalog_path.is_file():
-        raise SystemExit(f"missing private catalog: {catalog_path}")
-    catalog = read_json(catalog_path)
-    books = catalog_books(catalog)
     stager = load_stager()
-    publishable = [book for book in books if book.get("publish") is not False]
+    catalogs = []
+    publishable = []
+    seen_ids = set()
+    for name in PRIVATE_CATALOGS:
+        catalog_path = private_root / name
+        if not catalog_path.is_file():
+            if name == "books.json":
+                raise SystemExit(f"missing private catalog: {catalog_path}")
+            continue
+        catalog = read_json(catalog_path)
+        books = catalog_books(catalog)
+        for book in books:
+            book_id = require_book_id(stager, book)
+            if book_id in seen_ids:
+                raise SystemExit(f"duplicate private catalog book id: {book_id}")
+            seen_ids.add(book_id)
+        catalogs.append((catalog_path, catalog, books))
+        publishable.extend(book for book in books if book.get("publish") is not False)
     require_stageable_books(private_root, stager, publishable)
     changed = []
-    for book in publishable:
-        if book.get("publish") is not True:
-            book["publish"] = True
-            changed.append(require_book_id(stager, book))
+    changed_catalogs = []
+    for catalog_path, catalog, books in catalogs:
+        catalog_changed = False
+        for book in books:
+            if book.get("publish") is not False and book.get("publish") is not True:
+                book["publish"] = True
+                changed.append(require_book_id(stager, book))
+                catalog_changed = True
+        if catalog_changed:
+            changed_catalogs.append((catalog_path, catalog))
     if args.dry_run:
         print(f"would set publish: true for {len(changed)} private catalog entries")
         return
-    if changed:
+    for catalog_path, catalog in changed_catalogs:
         write_json(catalog_path, catalog)
     print(f"set publish: true for {len(changed)} private catalog entries")
 

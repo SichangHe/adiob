@@ -78,8 +78,9 @@ voice and publication workflow
     - scans both private indexes and their referenced text files
     - processes `books.json` entries unless they set `publish: false`
     - processes `internal-books.json` entries in the public ADIOB release repository
-      - catalog membership excludes them from the website index
-      - release assets remain public even when the UI does not list the book
+    - merges both catalogs into the internal reader UI
+      - duplicate ids fail staging
+      - release assets remain public even though UI access is internal
     - verifies existing remote asset names, sizes, and SHA-256 checksums
     - repairs stale release URLs when the narration text and remote assets match
     - generates only books without complete audio
@@ -88,7 +89,7 @@ voice and publication workflow
     - stops on a same-name asset with different content
       - use `--clobber` only after reviewing the conflict
     - records source identity and remote asset checksums in private manifests
-    - stages the website index and verifies internal-catalog ids are absent
+    - stages the reader index and verifies ids from both private catalogs are present
   - publish behavior
     - requires clean `main` worktrees with the expected GitHub origins
     - commits and pushes only generated manifests and private indexes
@@ -99,7 +100,7 @@ voice and publication workflow
       - add `--resume` when prior generated/index changes remain in the private worktree
       - inspect the private diff, then add `--accept-resume-changes` to commit those pre-existing changes
       - an inconsistent release or index stops the run
-- website staging includes every `books.json` entry
+- website staging includes entries from both private catalogs
   - private entries without `publish: true` are text-only reader titles
   - text-only entries use generated transcript text when present
   - text-only entries use private text when no generated manifest exists

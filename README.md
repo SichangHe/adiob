@@ -62,7 +62,7 @@ scripts/publish-release-audio.sh --confirm-rights -R OWNER/REPO audio-small-walk
 
 The release script requires `origin` to match `OWNER/REPO` before a real upload. Add `--clobber` only when replacing an existing release asset is intended.
 
-The reader UI plays `audioChunks` when present. Chunk paths can be manifest-relative files or public GitHub Release asset URLs. Without chunks, it tries `releaseAudio.url` first and falls back to `audio` if the release asset cannot be loaded. UI catalog membership controls which books appear; it does not restrict direct access to release assets.
+The internal reader UI plays `audioChunks` when present. Chunk paths can be manifest-relative files or public GitHub Release asset URLs. Without chunks, it tries `releaseAudio.url` first and falls back to `audio` if the release asset cannot be loaded. Entries from both private catalogs appear in the reader; UI access does not restrict direct access to release assets.
 
 GitHub Actions are disabled for this repository. Build and verify the combined site locally as documented in `docs/workflow.md`; no automatic website deployment is configured.
 

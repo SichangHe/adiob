@@ -9,7 +9,7 @@ import textwrap
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 
@@ -46,6 +46,16 @@ def load_release_processor() -> ModuleType:
 def load_publisher() -> ModuleType:
     path = Path(__file__).with_name("publish-private-audiobooks.py")
     spec = importlib.util.spec_from_file_location("private_audiobook_publisher", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_script(name: str, module_name: str) -> ModuleType:
+    path = Path(__file__).with_name(name)
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
@@ -417,8 +427,16 @@ def check_catalog_command_modes(module: ModuleType) -> None:
     with patch.object(module, "run") as run:
         module.process_catalog(args, Path("/private"), "books.json")
     command = run.call_args.args[0]
-    if "--confirm-rights" not in command or "--dry-run" in command:
+    if (
+        "--confirm-rights" not in command
+        or "--dry-run" in command
+        or "--exclude-publish-opt-out" not in command
+    ):
         raise AssertionError("non-dry catalog processing was not publication-capable")
+    with patch.object(module, "run") as run:
+        module.process_catalog(args, Path("/private"), "internal-books.json")
+    if "--exclude-publish-opt-out" not in run.call_args.args[0]:
+        raise AssertionError("internal catalog processing ignored publish opt-outs")
     args.confirm_rights = False
     args.dry_run = True
     with patch.object(module, "run") as run:
@@ -515,6 +533,155 @@ def check_publication_is_private_repo_only(module: ModuleType) -> None:
             raise AssertionError("publication did not make exactly one private push")
 
 
+def write_release_book(
+    private_root: Path, catalog_name: str, book_id: str, publish: bool | None
+) -> None:
+    generated_dir = private_root / "generated" / book_id
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    manifest: dict[str, object] = {
+        "id": book_id,
+        "title": book_id,
+        "author": "Author",
+        "generation": {"fullBook": True},
+        "segments": [{"id": "s001", "startSec": 0, "endSec": 1, "text": "Text"}],
+        "audioChunks": [
+            {
+                "id": "chunk-001",
+                "path": (
+                    "https://github.com/SichangHe/adiob/releases/download/"
+                    f"audiobooks-v1/{book_id}-chunk-001.m4a"
+                ),
+                "startSec": 0,
+                "endSec": 1,
+                "segmentStart": 0,
+                "segmentCount": 1,
+                "sha256": "a" * 64,
+                "sizeBytes": 1,
+            }
+        ],
+    }
+    (generated_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    path = private_root / catalog_name
+    catalog: dict[str, object] = (
+        json.loads(path.read_text(encoding="utf-8"))
+        if path.is_file()
+        else {"books": []}
+    )
+    book: dict[str, object] = {
+        "id": book_id,
+        "title": book_id,
+        "author": "Author",
+        "text": f"cleaned-texts/{book_id}.txt",
+        "generated": {
+            "manifest": f"generated/{book_id}/manifest.json",
+            "cover": f"generated/{book_id}/cover.svg",
+        },
+    }
+    if publish is not None:
+        book["publish"] = publish
+    books = catalog.get("books")
+    if not isinstance(books, list):
+        raise AssertionError("test catalog is invalid")
+    books.append(book)
+    path.write_text(json.dumps(catalog), encoding="utf-8")
+
+
+def check_private_catalog_union() -> None:
+    stager = load_script("stage-private-book-artifacts.py", "private_book_stager_union")
+    setter = load_script("set-private-books-publish.py", "private_book_publish_setter")
+    with tempfile.TemporaryDirectory(prefix="adiob-private-catalog-union-") as tmp:
+        root = Path(tmp)
+        private_root = root / "private"
+        site_root = root / "site"
+        (site_root / "data").mkdir(parents=True)
+        private_root.mkdir()
+        (site_root / "data/books.json").write_text(
+            json.dumps(
+                {
+                    "defaultBook": "public-book",
+                    "books": [
+                        {
+                            "id": "public-book",
+                            "title": "Public Book",
+                            "author": "Author",
+                            "manifest": "manifest.json",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        write_release_book(private_root, "books.json", "primary-book", None)
+        write_release_book(private_root, "books.json", "opt-out-book", False)
+        write_release_book(private_root, "internal-books.json", "internal-book", None)
+        setter_args = SimpleNamespace(private_root=private_root, dry_run=False)
+        with patch.object(setter, "parse_args", return_value=setter_args):
+            setter.main()
+        for name in ("books.json", "internal-books.json"):
+            catalog = json.loads((private_root / name).read_text(encoding="utf-8"))
+            if catalog["books"][0].get("publish") is not True:
+                raise AssertionError(f"{name} entry was not made publishable")
+        primary = json.loads((private_root / "books.json").read_text(encoding="utf-8"))
+        if primary["books"][1].get("publish") is not False:
+            raise AssertionError("explicit publish opt-out was not preserved")
+        stage_args = SimpleNamespace(
+            private_root=private_root,
+            site_root=site_root,
+            reader_path="field-notes-819a",
+            artifact_subdir="artifacts",
+            segment_page_size=48,
+        )
+        with patch.object(stager, "parse_args", return_value=stage_args):
+            stager.main()
+        staged = json.loads(
+            (site_root / "field-notes-819a/catalog.json").read_text(encoding="utf-8")
+        )
+        staged_ids = {book["id"] for book in staged["books"]}
+        if staged_ids != {
+            "public-book",
+            "primary-book",
+            "opt-out-book",
+            "internal-book",
+        }:
+            raise AssertionError(
+                "staged catalog did not contain the source catalog union"
+            )
+        internal_manifest = json.loads(
+            (site_root / "artifacts/internal-book/manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        if internal_manifest["audioChunks"][0]["path"] != (
+            "https://github.com/SichangHe/adiob/releases/download/"
+            "audiobooks-v1/internal-book-chunk-001.m4a"
+        ):
+            raise AssertionError("staging changed the public release URL")
+        publisher = load_publisher()
+        publisher.require_staged_ids(staged, staged_ids)
+        expect_exit(
+            lambda: publisher.require_staged_ids(staged, staged_ids | {"missing"})
+        )
+        expect_exit(
+            lambda: publisher.require_staged_ids(staged, staged_ids - {"internal-book"})
+        )
+        duplicated_staged = {"books": [*staged["books"], staged["books"][0]]}
+        expect_exit(lambda: publisher.require_staged_ids(duplicated_staged, staged_ids))
+
+        duplicate = json.loads(
+            (private_root / "internal-books.json").read_text(encoding="utf-8")
+        )
+        duplicate["books"][0]["id"] = "primary-book"
+        (private_root / "internal-books.json").write_text(
+            json.dumps(duplicate), encoding="utf-8"
+        )
+        expect_exit(lambda: stager.private_catalog_books(private_root))
+        original = (private_root / "books.json").read_text(encoding="utf-8")
+        with patch.object(setter, "parse_args", return_value=setter_args):
+            expect_exit(setter.main)
+        if (private_root / "books.json").read_text(encoding="utf-8") != original:
+            raise AssertionError("duplicate catalog ids mutated a source catalog")
+
+
 def main() -> None:
     module = load_extractor()
     check_output_boundary(module)
@@ -531,6 +698,7 @@ def main() -> None:
     check_catalog_command_modes(publisher)
     check_resume_requires_review(publisher)
     check_publication_is_private_repo_only(publisher)
+    check_private_catalog_union()
 
 
 if __name__ == "__main__":

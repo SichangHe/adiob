@@ -175,8 +175,7 @@ def process_catalog(args: argparse.Namespace, private_root: Path, catalog: str) 
         "-R",
         args.repo,
     ]
-    if catalog == "books.json":
-        cmd.append("--exclude-publish-opt-out")
+    cmd.append("--exclude-publish-opt-out")
     if args.confirm_rights:
         cmd.append("--confirm-rights")
     if args.clobber:
@@ -230,18 +229,25 @@ def verify_staged_index(private_root: Path) -> None:
             repo_root(),
         )
         staged = read_json(site_root / "field-notes-819a/catalog.json")
-        staged_ids = {book["id"] for book in staged["books"]}
-        public_ids = {
-            book["id"] for book in read_json(private_root / "books.json")["books"]
+        expected_ids = {
+            book["id"] for book in read_json(site_root / "data/books.json")["books"]
         }
-        internal_path = private_root / "internal-books.json"
-        internal_ids = (
-            {book["id"] for book in read_json(internal_path)["books"]}
-            if internal_path.is_file()
-            else set()
-        )
-        if not public_ids.issubset(staged_ids) or internal_ids & staged_ids:
-            raise SystemExit("staged Pages index is inconsistent with private indexes")
+        for catalog in CATALOGS:
+            path = private_root / catalog
+            if path.is_file():
+                expected_ids.update(book["id"] for book in read_json(path)["books"])
+        require_staged_ids(staged, expected_ids)
+
+
+def require_staged_ids(staged: dict[str, Any], expected_ids: set[str]) -> None:
+    books = staged.get("books")
+    if not isinstance(books, list) or any(not isinstance(book, dict) for book in books):
+        raise SystemExit("staged Pages index must contain a books list")
+    staged_ids = [book.get("id") for book in books]
+    if any(not isinstance(book_id, str) for book_id in staged_ids):
+        raise SystemExit("staged Pages index contains an invalid book id")
+    if len(staged_ids) != len(set(staged_ids)) or set(staged_ids) != expected_ids:
+        raise SystemExit("staged Pages index is inconsistent with source indexes")
 
 
 def expected_private_paths(private_root: Path) -> tuple[set[str], set[str]]:

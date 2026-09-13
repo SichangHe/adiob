@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 DEFAULT_ARTIFACT_SUBDIR = "archive-cache-a17"
 DEFAULT_SEGMENT_PAGE_SIZE = 48
+PRIVATE_CATALOGS = ("books.json", "internal-books.json")
 CHUNK_TIMING_TOLERANCE_SEC = 0.05
 RELEASE_AUDIO_HOST = "github.com"
 RELEASE_AUDIO_PATH_PREFIX = "/SichangHe/adiob/releases/download/"
@@ -95,6 +96,28 @@ def require_book_id(book: dict[str, Any]) -> str:
     if not isinstance(value, str) or not value:
         raise SystemExit("private catalog entry is missing a string id")
     return safe_id(value)
+
+
+# 🧑 "I can see the other books in the UI but not this book"
+def private_catalog_books(private_root: Path) -> list[dict[str, Any]]:
+    books = []
+    seen_ids = set()
+    for name in PRIVATE_CATALOGS:
+        path = private_root / name
+        if not path.is_file():
+            continue
+        catalog_books = read_json(path).get("books")
+        if not isinstance(catalog_books, list):
+            raise SystemExit(f"private catalog must contain a books list: {path}")
+        for book in catalog_books:
+            if not isinstance(book, dict):
+                raise SystemExit(f"private catalog books must be objects: {path}")
+            book_id = require_book_id(book)
+            if book_id in seen_ids:
+                raise SystemExit(f"duplicate private catalog book id: {book_id}")
+            seen_ids.add(book_id)
+            books.append(book)
+    return books
 
 
 def expected_generated_path(book_id: str, name: str) -> str:
@@ -537,18 +560,26 @@ def main() -> None:
     books = public_catalog.get("books")
     if not isinstance(books, list):
         raise SystemExit("public catalog must contain a books list")
-    by_id = {entry["id"]: entry for entry in books}
-    private_catalog_path = private_root / "books.json"
+    by_id = {}
+    for entry in books:
+        if not isinstance(entry, dict):
+            raise SystemExit("public catalog books must be objects")
+        entry_id = require_book_id(entry)
+        if entry_id in by_id:
+            raise SystemExit(f"duplicate staged catalog book id: {entry_id}")
+        by_id[entry_id] = entry
+    private_books = private_catalog_books(private_root)
+    for book in private_books:
+        book_id = require_book_id(book)
+        if book_id in by_id:
+            raise SystemExit(f"duplicate staged catalog book id: {book_id}")
     staged_private_entries = []
     staged_audio_entries = []
-    if private_catalog_path.is_file():
+    if private_books:
         artifact_root = site_root / artifact_subdir
         if artifact_root.exists():
             shutil.rmtree(artifact_root)
-        private_catalog = read_json(private_catalog_path)
-        for book in private_catalog.get("books", []):
-            if not isinstance(book, dict):
-                continue
+        for book in private_books:
             if book.get("publish") is True:
                 entry, has_audio = stage_book(
                     private_root,
@@ -573,7 +604,7 @@ def main() -> None:
                 staged_audio_entries.append(entry["id"])
             by_id[entry["id"]] = entry
     else:
-        print("no private book catalog found; staging public catalog only")
+        print("no private catalog books found; staging public catalog only")
     staged_books = list(by_id.values())
     staged_catalog = {
         "defaultBook": (

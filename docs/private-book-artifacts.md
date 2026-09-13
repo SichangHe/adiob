@@ -6,10 +6,14 @@ private book artifacts
   - stage approved entries into a local website build
 - private repo layout
   - `books.json`
-    - private catalog
+    - primary private catalog
     - entries with `publish: true` are staged into the website build
     - entries without `publish: true` are staged as text-only reader entries
       - text transcript pages are copied into the website build
+  - `internal-books.json`
+    - separate private catalog
+    - follows the same staging rules as `books.json`
+    - its entries also appear in the internal reader UI
   - `top-level-english-files.json`
     - private audited list of source paths relative to the local book directory
   - `texts/<book>.txt`
@@ -39,7 +43,9 @@ private book artifacts
   - GitHub Actions are disabled and must not be used
   - no automatic website deployment is configured
 - website staging
-  - copies only generated artifacts from private catalog entries with `publish: true`
+  - merges `books.json` and `internal-books.json`
+  - rejects duplicate book ids across catalogs
+  - copies generated artifacts from entries with `publish: true`
   - stages entries without `publish: true` as text-only reader titles
     - transcript pages are copied from generated manifests when present
     - transcript pages are copied from private text when no generated manifest exists
@@ -48,7 +54,7 @@ private book artifacts
   - rewrites staged manifests to cover paths, page paths, and release-backed chunk URLs
   - writes transcript text into per-book `pages/page-*.json`
   - passes through only `https://github.com/SichangHe/adiob/releases/download/...` chunk URLs
-  - writes selected private entries into `_site/field-notes-819a/catalog.json`
+  - writes all private-catalog entries into `_site/field-notes-819a/catalog.json`
 - reader path
   - `field-notes-819a/`
 - root path
