@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import tempfile
 import textwrap
@@ -35,6 +36,16 @@ def load_exporter() -> ModuleType:
 def load_release_processor() -> ModuleType:
     path = Path(__file__).with_name("process-private-book-release.py")
     spec = importlib.util.spec_from_file_location("private_book_release", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_publisher() -> ModuleType:
+    path = Path(__file__).with_name("publish-private-audiobooks.py")
+    spec = importlib.util.spec_from_file_location("private_audiobook_publisher", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
@@ -88,7 +99,9 @@ def check_output_boundary(module: ModuleType) -> None:
         target.mkdir()
         (root / "owned-text").symlink_to(target, target_is_directory=True)
         with_fake_repo(module, root)
-        expect_exit(lambda: module.write_owned_file(Path("owned-text/out.txt"), "private"))
+        expect_exit(
+            lambda: module.write_owned_file(Path("owned-text/out.txt"), "private")
+        )
 
 
 def check_epub_uri_paths(module: ModuleType) -> None:
@@ -136,17 +149,21 @@ def check_pdf_ocr_fallback(module: ModuleType) -> None:
             type("Result", (), {"stdout": ""})(),
             type("Result", (), {"stdout": "Recovered words " * 30})(),
         ]
-        with patch.object(module.shutil, "which", return_value="/bin/tool"), patch.object(
-            module.subprocess, "run", side_effect=results
-        ) as run:
+        with (
+            patch.object(module.shutil, "which", return_value="/bin/tool"),
+            patch.object(module.subprocess, "run", side_effect=results) as run,
+        ):
             text = module.extract_pdf(source)
         if "Recovered words" not in text:
             raise AssertionError("OCR text was not returned")
         if "--force-ocr" not in run.call_args_list[1].args[0]:
             raise AssertionError("sparse text fallback did not force OCR")
-        if run.call_args_list[1].args[0][
-            run.call_args_list[1].args[0].index("--language") + 1
-        ] != "eng":
+        if (
+            run.call_args_list[1].args[0][
+                run.call_args_list[1].args[0].index("--language") + 1
+            ]
+            != "eng"
+        ):
             raise AssertionError("OCR language was not passed to OCRmyPDF")
 
 
@@ -187,7 +204,9 @@ def check_exporter_boundaries(module: ModuleType) -> None:
             {"id": "safe-book", "text": "../target.txt", "generated": None},
             {"id": "safe-book", "text": "texts/safe-book.txt", "generated": {}},
         ):
-            expect_exit(lambda invalid=invalid: module.refresh_book_id(invalid, "book.pdf"))
+            expect_exit(
+                lambda invalid=invalid: module.refresh_book_id(invalid, "book.pdf")
+            )
 
 
 def check_release_voice(module: ModuleType) -> None:
@@ -210,13 +229,132 @@ def check_release_voice(module: ModuleType) -> None:
         raise AssertionError("Chinese TTS dependencies leaked into English generation")
 
 
+def check_release_integrity_relink(module: ModuleType) -> None:
+    with tempfile.TemporaryDirectory(prefix="adiob-release-check-") as tmp:
+        private_root = Path(tmp)
+        book_id = "test-book"
+        text_path = private_root / "texts/test-book.txt"
+        manifest_path = private_root / "generated/test-book/manifest.json"
+        text_path.parent.mkdir()
+        manifest_path.parent.mkdir(parents=True)
+        text_path.write_text("test narration\n", encoding="utf-8")
+        segments = [
+            {"id": "s001", "text": "test narration", "startSec": 0, "endSec": 2}
+        ]
+        manifest = {
+            "generation": {"fullBook": True},
+            "segments": segments,
+            "audioChunks": [
+                {
+                    "id": "chunk-001",
+                    "path": "https://github.com/old/repo/releases/download/audio-v1/test-book-chunk-001.m4a",
+                    "startSec": 0,
+                    "endSec": 2,
+                }
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        book = {
+            "id": book_id,
+            "text": "texts/test-book.txt",
+            "generated": {"manifest": "generated/test-book/manifest.json"},
+        }
+        catalog = {"books": [book]}
+        catalog_path = private_root / "books.json"
+        catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        args = type("Args", (), {"dry_run": False})()
+        asset = module.ReleaseAsset("test-book-chunk-001.m4a", 42, "a" * 64)
+        if not module.reconcile_existing_manifest(
+            module.load_local_builder(),
+            args,
+            private_root,
+            catalog_path,
+            catalog,
+            book,
+            text_path,
+            "SichangHe/adiob",
+            "audio-v1",
+            {asset.name: asset},
+        ):
+            raise AssertionError("complete remote audio was not relinked")
+        linked = json.loads(manifest_path.read_text(encoding="utf-8"))
+        chunk = linked["audioChunks"][0]
+        if chunk["sha256"] != "a" * 64 or chunk["sizeBytes"] != 42:
+            raise AssertionError("release integrity metadata was not recorded")
+        if "/SichangHe/adiob/releases/" not in chunk["path"]:
+            raise AssertionError("release URL was not corrected")
+        if book["release"]["sourceTextSha256"] != module.sha256_file(text_path):
+            raise AssertionError("catalog source identity was not recorded")
+        linked["generation"].pop("sourceTextSha256")
+        linked["generation"].pop("narrationTextSha256")
+        linked["textProcessing"] = {"frontMatter": "skipped"}
+        manifest_path.write_text(json.dumps(linked), encoding="utf-8")
+        text_path.write_text("omitted middle\n\ntest narration\n", encoding="utf-8")
+        if module.reconcile_existing_manifest(
+            module.load_local_builder(),
+            args,
+            private_root,
+            catalog_path,
+            catalog,
+            book,
+            text_path,
+            "SichangHe/adiob",
+            "audio-v1",
+            {asset.name: asset},
+        ):
+            raise AssertionError("legacy audio was adopted for different source text")
+
+
+def check_release_conflict(module: ModuleType) -> None:
+    with tempfile.TemporaryDirectory(prefix="adiob-conflict-check-") as tmp:
+        root = Path(tmp)
+        audio = root / "chunk-001.m4a"
+        audio.write_bytes(b"new audio")
+        manifest_path = root / "manifest.json"
+        manifest = {
+            "audioChunks": [{"path": "chunk-001.m4a", "startSec": 0, "endSec": 1}]
+        }
+        args = type("Args", (), {"dry_run": False, "clobber": False})()
+        conflict = module.ReleaseAsset("test-book-chunk-001.m4a", 1, "b" * 64)
+        with patch.object(
+            module, "existing_release_assets", return_value={conflict.name: conflict}
+        ):
+            expect_exit(
+                lambda: module.upload_release_assets(
+                    args,
+                    "SichangHe/adiob",
+                    "audio-v1",
+                    "test-book",
+                    manifest,
+                    manifest_path,
+                )
+            )
+
+
+def check_pages_ref_update(module: ModuleType) -> None:
+    value = "          PRIVATE_BOOK_ARTIFACT_REF: " + "a" * 40 + "\n"
+    updated, count = module.PRIVATE_ARTIFACT_REF.subn(rf"\g<1>{'b' * 40}\g<2>", value)
+    if count != 1 or "b" * 40 not in updated:
+        raise AssertionError("Pages private index pin was not updated exactly once")
+    with tempfile.TemporaryDirectory(prefix="adiob-publish-path-check-") as tmp:
+        root = Path(tmp)
+        (root / "books.json").write_text("{}", encoding="utf-8")
+        (root / "generated").mkdir()
+        if module.private_add_paths(root) != ["books.json", "generated"]:
+            raise AssertionError("optional internal catalog became a Git pathspec")
+
+
 def main() -> None:
     module = load_extractor()
     check_output_boundary(module)
     check_epub_uri_paths(module)
     check_pdf_ocr_fallback(module)
     check_exporter_boundaries(load_exporter())
-    check_release_voice(load_release_processor())
+    release = load_release_processor()
+    check_release_voice(release)
+    check_release_integrity_relink(release)
+    check_release_conflict(release)
+    check_pages_ref_update(load_publisher())
 
 
 if __name__ == "__main__":

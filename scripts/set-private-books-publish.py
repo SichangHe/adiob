@@ -16,7 +16,7 @@ DEFAULT_PRIVATE_ROOT = Path("../adiob-private-artifacts")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Set every stageable private catalog book to publish: true."
+        description="Publish stageable private books unless explicitly opted out."
     )
     parser.add_argument("--private-root", type=Path, default=DEFAULT_PRIVATE_ROOT)
     parser.add_argument("--dry-run", action="store_true")
@@ -84,7 +84,9 @@ def require_stageable_books(
     for book in books:
         entry_id = require_book_id(stager, book)
         generated = book.get("generated")
-        if not isinstance(generated, dict) or not stager.generated_has_full_release_audio(
+        if not isinstance(
+            generated, dict
+        ) or not stager.generated_has_full_release_audio(
             private_root, entry_id, generated
         ):
             missing.append(entry_id)
@@ -97,9 +99,8 @@ def require_stageable_books(
     for entry_id in missing:
         print(f"- {entry_id}")
     print(
-        "run scripts/process-private-book-release.py --private-root "
-        "../adiob-private-artifacts --all-books --release-tag "
-        "audio-owned-chunks-v3 -R SichangHe/adiob --confirm-rights"
+        "run scripts/publish-private-audiobooks.py --private-root "
+        "../adiob-private-artifacts --confirm-rights"
     )
     raise SystemExit(1)
 
@@ -125,9 +126,10 @@ def main() -> None:
     catalog = read_json(catalog_path)
     books = catalog_books(catalog)
     stager = load_stager()
-    require_stageable_books(private_root, stager, books)
+    publishable = [book for book in books if book.get("publish") is not False]
+    require_stageable_books(private_root, stager, publishable)
     changed = []
-    for book in books:
+    for book in publishable:
         if book.get("publish") is not True:
             book["publish"] = True
             changed.append(require_book_id(stager, book))

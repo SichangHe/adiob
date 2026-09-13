@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -11,18 +12,26 @@ import subprocess
 import tempfile
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, NamedTuple
 
 
 DEFAULT_PRIVATE_ROOT = Path("../adiob-private-artifacts")
 DEFAULT_LOCAL_ROOT = Path("local/owned-books")
 DEFAULT_REPO = "SichangHe/adiob"
-DEFAULT_RELEASE_TAG = "audio-owned-chunks-v3"
+DEFAULT_RELEASE_TAG = "audio-owned-chunks-v7"
 DEFAULT_CHUNK_SEGMENTS = 48
 DEFAULT_CHUNK_EXT = ".m4a"
 DEFAULT_MAX_TTS_CHARS = 1800
 CHUNK_TIMING_TOLERANCE_SEC = 0.05
 SAFE_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+SAFE_RELEASE_TAG = re.compile(r"[A-Za-z0-9._-]+")
+SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+class ReleaseAsset(NamedTuple):
+    name: str
+    size_bytes: int
+    sha256: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,12 +39,14 @@ def parse_args() -> argparse.Namespace:
         description="Generate, upload, and link release audio for private catalog books."
     )
     parser.add_argument("--private-root", type=Path, default=DEFAULT_PRIVATE_ROOT)
+    parser.add_argument("--catalog", default="books.json")
     parser.add_argument("--local-root", type=Path, default=DEFAULT_LOCAL_ROOT)
     parser.add_argument("--book-id", action="append", default=[])
     parser.add_argument("--all-books", action="store_true")
     parser.add_argument("--all-published", action="store_true")
+    parser.add_argument("--exclude-publish-opt-out", action="store_true")
     parser.add_argument("-R", "--repo", default=DEFAULT_REPO)
-    parser.add_argument("--release-tag", default=DEFAULT_RELEASE_TAG)
+    parser.add_argument("--release-tag")
     parser.add_argument("--chunk-segments", type=int, default=DEFAULT_CHUNK_SEGMENTS)
     parser.add_argument("--chunk-ext", default=DEFAULT_CHUNK_EXT)
     parser.add_argument("--voice")
@@ -108,6 +119,67 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     write_file(path, json.dumps(value, indent=2, ensure_ascii=False) + "\n")
 
 
+def private_catalog_path(private_root: Path, value: str) -> Path:
+    path = Path(value)
+    if path.name != value or path.suffix != ".json":
+        raise SystemExit("--catalog must be a JSON filename at the private repo root")
+    return private_root / path
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while block := source.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def narration_sha256(segments: list[dict[str, Any]]) -> str:
+    value = [
+        {"id": str(segment.get("id", "")), "text": str(segment.get("text", ""))}
+        for segment in segments
+    ]
+    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def narration_matches_source(
+    builder: ModuleType, text_path: Path, manifest: dict[str, Any]
+) -> bool:
+    manifest_segments = manifest.get("segments")
+    if not isinstance(manifest_segments, list):
+        return False
+    text_processing = manifest.get("textProcessing")
+    skip_front_matter = (
+        isinstance(text_processing, dict)
+        and text_processing.get("frontMatter") == "skipped"
+    )
+    try:
+        excerpt = builder.read_excerpt(text_path, 0, None, skip_front_matter)
+    except SystemExit:
+        return False
+    source_segments = builder.rough_segments(builder.split_segments(excerpt))
+    source_texts = [str(segment.get("text", "")) for segment in source_segments]
+    narration_texts = [str(segment.get("text", "")) for segment in manifest_segments]
+    return bool(narration_texts) and source_texts == narration_texts
+
+
+def expected_segments(
+    builder: ModuleType, args: argparse.Namespace, text_path: Path
+) -> tuple[list[dict[str, Any]], bool]:
+    skip_front_matter = should_skip_front_matter(args)
+    try:
+        excerpt = builder.read_excerpt(
+            text_path, args.max_chars, args.start_line, skip_front_matter
+        )
+    except SystemExit:
+        if args.skip_front_matter or args.include_front_matter or args.start_line:
+            raise
+        skip_front_matter = False
+        excerpt = builder.read_excerpt(text_path, args.max_chars, None, False)
+    return builder.rough_segments(builder.split_segments(excerpt)), skip_front_matter
+
+
 def require_catalog_text(private_root: Path, book: dict[str, Any]) -> Path:
     value = book.get("text")
     book_id = book.get("id")
@@ -122,7 +194,9 @@ def require_catalog_text(private_root: Path, book: dict[str, Any]) -> Path:
     return path
 
 
-def selected_books(catalog: dict[str, Any], args: argparse.Namespace) -> list[dict[str, Any]]:
+def selected_books(
+    catalog: dict[str, Any], args: argparse.Namespace
+) -> list[dict[str, Any]]:
     books = catalog.get("books")
     if not isinstance(books, list):
         raise SystemExit("private catalog must contain a books list")
@@ -132,7 +206,9 @@ def selected_books(catalog: dict[str, Any], args: argparse.Namespace) -> list[di
         ids.extend(
             book["id"]
             for book in books
-            if isinstance(book, dict) and isinstance(book.get("id"), str)
+            if isinstance(book, dict)
+            and isinstance(book.get("id"), str)
+            and (not args.exclude_publish_opt_out or book.get("publish") is not False)
         )
     if args.all_published:
         ids.extend(
@@ -179,19 +255,12 @@ def build_local_manifest(
     builder: ModuleType,
     args: argparse.Namespace,
     book: dict[str, Any],
-    text_path: Path,
+    segments: list[dict[str, Any]],
+    skip_front_matter: bool,
 ) -> Path:
     book_id = str(book["id"])
     out_dir = local_book_dir(args, book_id)
     out_rel = Path(os.path.relpath(out_dir, repo_root()))
-    skip_front_matter = should_skip_front_matter(args)
-    excerpt = builder.read_excerpt(
-        text_path,
-        args.max_chars,
-        args.start_line,
-        skip_front_matter,
-    )
-    segments = builder.rough_segments(builder.split_segments(excerpt))
     manifest = {
         "id": book_id,
         "title": str(book.get("title") or book_id),
@@ -233,7 +302,9 @@ def generate_audio(
     book_id = str(book["id"])
     voice, lang = book_voice_lang(args, book)
     rel_manifest = Path(os.path.relpath(manifest, repo_root()))
-    rel_chunk_dir = Path(os.path.relpath(local_book_dir(args, book_id) / "chunks", repo_root()))
+    rel_chunk_dir = Path(
+        os.path.relpath(local_book_dir(args, book_id) / "chunks", repo_root())
+    )
     cmd = [
         "uv",
         "run",
@@ -267,9 +338,7 @@ def tts_dependency_args(lang: str) -> list[str]:
     return [item for dependency in dependencies for item in ("--with", dependency)]
 
 
-def book_voice_lang(
-    args: argparse.Namespace, book: dict[str, Any]
-) -> tuple[str, str]:
+def book_voice_lang(args: argparse.Namespace, book: dict[str, Any]) -> tuple[str, str]:
     return (
         str(args.voice or book.get("voice") or "af_heart"),
         str(args.lang or book.get("language") or "a"),
@@ -291,18 +360,42 @@ def canonical_repo(repo: str, dry_run: bool) -> str:
 
 def require_staged_release_repo(repo: str) -> None:
     if repo.lower() != DEFAULT_REPO.lower():
-        raise SystemExit(
-            f"staged release URLs must use {DEFAULT_REPO}; got {repo}"
-        )
+        raise SystemExit(f"staged release URLs must use {DEFAULT_REPO}; got {repo}")
 
 
 def release_url_prefix(repo: str, tag: str) -> str:
     return f"https://github.com/{repo}/releases/download/{tag}/"
 
 
-def has_complete_release_chunks(
-    manifest: dict[str, Any], repo: str, tag: str, assets: set[str] | None = None
-) -> bool:
+def book_release_tag(
+    args: argparse.Namespace, private_root: Path, book: dict[str, Any]
+) -> str:
+    candidates = [args.release_tag]
+    release = book.get("release")
+    if isinstance(release, dict):
+        candidates.append(release.get("tag"))
+    book_id = str(book["id"])
+    manifest_path = private_root / f"generated/{book_id}/manifest.json"
+    if manifest_path.is_file():
+        generation = read_json(manifest_path).get("generation")
+        if isinstance(generation, dict):
+            candidates.append(generation.get("releaseTag"))
+    candidates.append(DEFAULT_RELEASE_TAG)
+    tag = next(value for value in candidates if isinstance(value, str) and value)
+    if SAFE_RELEASE_TAG.fullmatch(tag) is None:
+        raise SystemExit(f"unsafe release tag for {book_id}: {tag}")
+    return tag
+
+
+def valid_release_asset(asset: ReleaseAsset | None) -> bool:
+    return (
+        asset is not None
+        and asset.size_bytes > 0
+        and SHA256.fullmatch(asset.sha256) is not None
+    )
+
+
+def manifest_audio_shape_valid(manifest: dict[str, Any]) -> bool:
     generation = manifest.get("generation")
     if not isinstance(generation, dict) or generation.get("fullBook") is not True:
         return False
@@ -313,14 +406,8 @@ def has_complete_release_chunks(
     if not isinstance(segments, list) or not segments:
         return False
     previous_end_sec = 0.0
-    prefix = release_url_prefix(repo, tag)
     for chunk in chunks:
         if not isinstance(chunk, dict):
-            return False
-        path = chunk.get("path")
-        if not isinstance(path, str) or not path.startswith(prefix):
-            return False
-        if assets is not None and Path(path).name not in assets:
             return False
         try:
             start_sec = float(chunk.get("startSec", -1))
@@ -343,8 +430,27 @@ def has_complete_release_chunks(
     return abs(previous_end_sec - last_end_sec) <= CHUNK_TIMING_TOLERANCE_SEC
 
 
-def existing_linked_manifest_complete(
-    private_root: Path, book: dict[str, Any], repo: str, tag: str
+def expected_asset_name(book_id: str, index: int, chunk: dict[str, Any]) -> str:
+    path = chunk.get("path")
+    suffix = Path(path).suffix if isinstance(path, str) else ""
+    if suffix not in {".wav", ".m4a", ".mp4", ".aac", ".mp3"}:
+        raise SystemExit(
+            f"audio chunk has an unsafe extension: {book_id} chunk {index}"
+        )
+    return f"{book_id}-chunk-{index:03d}{suffix}"
+
+
+def reconcile_existing_manifest(
+    builder: ModuleType,
+    args: argparse.Namespace,
+    private_root: Path,
+    catalog_path: Path,
+    catalog: dict[str, Any],
+    book: dict[str, Any],
+    text_path: Path,
+    repo: str,
+    tag: str,
+    assets: dict[str, ReleaseAsset] | None,
 ) -> bool:
     generated = book.get("generated")
     book_id = str(book["id"])
@@ -355,11 +461,90 @@ def existing_linked_manifest_complete(
         return False
     if not path.is_file():
         return False
-    return has_complete_release_chunks(read_json(path), repo, tag, existing_release_assets(repo, tag))
+    manifest = read_json(path)
+    manifest_segments = manifest.get("segments")
+    if (
+        not manifest_audio_shape_valid(manifest)
+        or not isinstance(manifest_segments, list)
+        or assets is None
+    ):
+        return False
+    source_sha256 = sha256_file(text_path)
+    manifest_narration_sha256 = narration_sha256(manifest_segments)
+    generation = manifest["generation"]
+    stored_source_sha256 = generation.get("sourceTextSha256")
+    stored_narration_sha256 = generation.get("narrationTextSha256")
+    if stored_source_sha256 not in (None, source_sha256):
+        return False
+    if stored_narration_sha256 not in (None, manifest_narration_sha256):
+        raise SystemExit(f"generated manifest narration identity changed: {book_id}")
+    if stored_source_sha256 is None and not narration_matches_source(
+        builder, text_path, manifest
+    ):
+        return False
+    chunks = manifest["audioChunks"]
+    prefix = release_url_prefix(repo, tag)
+    changed = False
+    for index, chunk in enumerate(chunks, start=1):
+        asset_name = expected_asset_name(book_id, index, chunk)
+        asset = assets.get(asset_name)
+        if not valid_release_asset(asset):
+            return False
+        assert asset is not None
+        stored_sha256 = chunk.get("sha256")
+        stored_size = chunk.get("sizeBytes")
+        if stored_sha256 not in (None, asset.sha256) or stored_size not in (
+            None,
+            asset.size_bytes,
+        ):
+            raise SystemExit(
+                f"release asset conflicts with recorded checksum: {repo} {tag} {asset_name}"
+            )
+        expected_path = f"{prefix}{asset_name}"
+        for key, value in (
+            ("path", expected_path),
+            ("sha256", asset.sha256),
+            ("sizeBytes", asset.size_bytes),
+        ):
+            if chunk.get(key) != value:
+                chunk[key] = value
+                changed = True
+    expected_generation = {
+        "releaseRepo": repo,
+        "releaseTag": tag,
+        "sourceTextSha256": source_sha256,
+        "narrationTextSha256": manifest_narration_sha256,
+        "identityStatus": generation.get("identityStatus")
+        or "adopted-existing-release",
+    }
+    for key, value in expected_generation.items():
+        if generation.get(key) != value:
+            generation[key] = value
+            changed = True
+    expected_release = {
+        "repository": repo,
+        "tag": tag,
+        "assetCount": len(chunks),
+        "sourceTextSha256": source_sha256,
+    }
+    if book.get("release") != expected_release:
+        book["release"] = expected_release
+        changed = True
+    if changed and not args.dry_run:
+        write_json(path, manifest)
+        write_json(catalog_path, catalog)
+    verb = "would link" if args.dry_run and changed else "linked" if changed else "skip"
+    print(f"{verb} {book_id}: {len(chunks)} verified release assets")
+    return True
 
 
 def mark_generation(
-    args: argparse.Namespace, manifest: dict[str, Any], book_id: str, repo: str
+    args: argparse.Namespace,
+    manifest: dict[str, Any],
+    book_id: str,
+    repo: str,
+    tag: str,
+    text_path: Path,
 ) -> None:
     segments = manifest.get("segments") or []
     manifest["generation"] = {
@@ -372,12 +557,15 @@ def mark_generation(
             if isinstance(segment, dict)
         ),
         "releaseRepo": repo,
-        "releaseTag": args.release_tag,
+        "releaseTag": tag,
+        "sourceTextSha256": sha256_file(text_path),
+        "narrationTextSha256": narration_sha256(segments),
+        "identityStatus": "generated-and-verified",
         "timing": "batched rough segment timing",
     }
 
 
-def existing_release_assets(repo: str, tag: str) -> set[str]:
+def existing_release_assets(repo: str, tag: str) -> dict[str, ReleaseAsset] | None:
     result = subprocess.run(
         [
             "gh",
@@ -388,21 +576,37 @@ def existing_release_assets(repo: str, tag: str) -> set[str]:
             repo,
             "--json",
             "assets",
-            "-q",
-            ".assets[].name",
         ],
         cwd=repo_root(),
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        return set()
-    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        if "release not found" in result.stderr.lower():
+            return None
+        raise SystemExit(
+            result.stderr.strip() or f"could not read release {repo} {tag}"
+        )
+    value = json.loads(result.stdout)
+    assets = {}
+    for raw in value.get("assets", []):
+        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
+            continue
+        digest = raw.get("digest")
+        sha256 = digest.removeprefix("sha256:") if isinstance(digest, str) else ""
+        size = raw.get("size")
+        assets[raw["name"]] = ReleaseAsset(
+            name=raw["name"],
+            size_bytes=size if isinstance(size, int) else 0,
+            sha256=sha256,
+        )
+    return assets
 
 
 def upload_release_assets(
     args: argparse.Namespace,
     repo: str,
+    tag: str,
     book_id: str,
     manifest: dict[str, Any],
     manifest_path: Path,
@@ -413,9 +617,11 @@ def upload_release_assets(
     if args.dry_run:
         print(f"would upload {len(chunks)} chunks for {book_id}")
         return
-    existing_assets = existing_release_assets(repo, args.release_tag)
+    existing = existing_release_assets(repo, tag)
+    existing_assets = existing or {}
     with tempfile.TemporaryDirectory(prefix=f"adiob-release-{book_id}-") as tmp:
         upload_files = []
+        local_assets: dict[str, ReleaseAsset] = {}
         tmp_dir = Path(tmp)
         for index, chunk in enumerate(chunks, start=1):
             path = chunk.get("path") if isinstance(chunk, dict) else None
@@ -425,31 +631,34 @@ def upload_release_assets(
             if not source.is_file():
                 raise SystemExit(f"missing generated audio chunk: {source}")
             asset_name = f"{book_id}-chunk-{index:03d}{source.suffix}"
-            chunk["path"] = (
-                f"{release_url_prefix(repo, args.release_tag)}{asset_name}"
+            local_asset = ReleaseAsset(
+                name=asset_name,
+                size_bytes=source.stat().st_size,
+                sha256=sha256_file(source),
             )
-            if asset_name in existing_assets and not args.clobber:
+            local_assets[asset_name] = local_asset
+            remote_asset = existing_assets.get(asset_name)
+            if remote_asset == local_asset:
                 continue
+            if remote_asset is not None and not args.clobber:
+                raise SystemExit(
+                    "release asset name exists with different content; "
+                    f"rerun with --clobber only after review: {repo} {tag} {asset_name}"
+                )
             upload_path = tmp_dir / asset_name
             shutil.copyfile(source, upload_path)
             upload_files.append(upload_path)
-        view = subprocess.run(
-            ["gh", "release", "view", args.release_tag, "-R", repo],
-            cwd=repo_root(),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if view.returncode != 0:
+        if existing is None:
             subprocess.run(
                 [
                     "gh",
                     "release",
                     "create",
-                    args.release_tag,
+                    tag,
                     "-R",
                     repo,
                     "--title",
-                    args.release_tag,
+                    tag,
                     "--notes",
                     "Audiobook chunk assets for rights-cleared adiob content.",
                 ],
@@ -457,7 +666,7 @@ def upload_release_assets(
                 check=True,
             )
         if upload_files:
-            upload_cmd = ["gh", "release", "upload", args.release_tag]
+            upload_cmd = ["gh", "release", "upload", tag]
             upload_cmd.extend(str(path) for path in upload_files)
             if args.clobber:
                 upload_cmd.append("--clobber")
@@ -465,14 +674,32 @@ def upload_release_assets(
             subprocess.run(upload_cmd, cwd=repo_root(), check=True)
         else:
             print(f"release assets already exist for {book_id}")
+    uploaded = existing_release_assets(repo, tag)
+    if uploaded is None:
+        raise SystemExit(f"release disappeared after upload: {repo} {tag}")
+    prefix = release_url_prefix(repo, tag)
+    for index, chunk in enumerate(chunks, start=1):
+        asset_name = expected_asset_name(book_id, index, chunk)
+        expected = local_assets[asset_name]
+        actual = uploaded.get(asset_name)
+        if actual != expected:
+            raise SystemExit(
+                f"release checksum verification failed: {repo} {tag} {asset_name}"
+            )
+        chunk["path"] = f"{prefix}{asset_name}"
+        chunk["sha256"] = actual.sha256
+        chunk["sizeBytes"] = actual.size_bytes
 
 
 def copy_private_generated(
     private_root: Path,
+    catalog_path: Path,
     catalog: dict[str, Any],
     book: dict[str, Any],
     manifest_path: Path,
     manifest: dict[str, Any],
+    repo: str,
+    tag: str,
     dry_run: bool,
 ) -> None:
     book_id = str(book["id"])
@@ -492,32 +719,77 @@ def copy_private_generated(
         "manifest": f"generated/{book_id}/manifest.json",
         "cover": f"generated/{book_id}/cover.svg",
     }
-    write_json(private_root / "books.json", catalog)
+    generation = manifest["generation"]
+    book["release"] = {
+        "repository": repo,
+        "tag": tag,
+        "assetCount": len(manifest["audioChunks"]),
+        "sourceTextSha256": generation["sourceTextSha256"],
+    }
+    write_json(catalog_path, catalog)
 
 
 def process_book(
     builder: ModuleType,
     args: argparse.Namespace,
     private_root: Path,
+    catalog_path: Path,
     catalog: dict[str, Any],
     repo: str,
     book: dict[str, Any],
+    release_assets: dict[str, dict[str, ReleaseAsset] | None],
 ) -> None:
     book_id = str(book["id"])
-    if not args.force and existing_linked_manifest_complete(
-        private_root, book, repo, args.release_tag
+    release = book.get("release")
+    if catalog_path.name == "internal-books.json" and (
+        book.get("internalOnly") is not True
+        or book.get("rightsConfirmed") is not True
+        or not isinstance(release, dict)
+        or not isinstance(release.get("tag"), str)
     ):
-        print(f"skip {book_id}: complete linked release chunks already exist")
-        return
+        raise SystemExit(
+            "internal catalog entry must explicitly confirm internal use, rights, "
+            f"and a release tag: {book_id}"
+        )
+    tag = book_release_tag(args, private_root, book)
     text_path = require_catalog_text(private_root, book)
-    manifest_path = build_local_manifest(builder, args, book, text_path)
+    if tag not in release_assets:
+        release_assets[tag] = existing_release_assets(repo, tag)
+    if not args.force and reconcile_existing_manifest(
+        builder,
+        args,
+        private_root,
+        catalog_path,
+        catalog,
+        book,
+        text_path,
+        repo,
+        tag,
+        release_assets[tag],
+    ):
+        return
+    segments, skipped_front_matter = expected_segments(builder, args, text_path)
+    manifest_path = build_local_manifest(
+        builder, args, book, segments, skipped_front_matter
+    )
     generate_audio(args, manifest_path, book)
     if args.dry_run:
         return
     manifest = read_json(manifest_path)
-    mark_generation(args, manifest, book_id, repo)
-    upload_release_assets(args, repo, book_id, manifest, manifest_path)
-    copy_private_generated(private_root, catalog, book, manifest_path, manifest, args.dry_run)
+    mark_generation(args, manifest, book_id, repo, tag, text_path)
+    upload_release_assets(args, repo, tag, book_id, manifest, manifest_path)
+    copy_private_generated(
+        private_root,
+        catalog_path,
+        catalog,
+        book,
+        manifest_path,
+        manifest,
+        repo,
+        tag,
+        args.dry_run,
+    )
+    release_assets[tag] = existing_release_assets(repo, tag)
     duration = manifest.get("durationSec")
     chunks = len(manifest.get("audioChunks") or [])
     print(f"linked {book_id}: duration={duration} chunks={chunks}")
@@ -528,7 +800,7 @@ def main() -> None:
     if not args.confirm_rights and not args.dry_run:
         raise SystemExit("pass --confirm-rights for public release audio generation")
     private_root = require_private_root(args.private_root)
-    catalog_path = private_root / "books.json"
+    catalog_path = private_catalog_path(private_root, args.catalog)
     if not catalog_path.is_file():
         raise SystemExit(f"missing private catalog: {catalog_path}")
     catalog = read_json(catalog_path)
@@ -536,8 +808,18 @@ def main() -> None:
     repo = canonical_repo(args.repo, args.dry_run)
     require_staged_release_repo(repo)
     builder = load_local_builder()
+    release_assets: dict[str, dict[str, ReleaseAsset] | None] = {}
     for book in books:
-        process_book(builder, args, private_root, catalog, repo, book)
+        process_book(
+            builder,
+            args,
+            private_root,
+            catalog_path,
+            catalog,
+            repo,
+            book,
+            release_assets,
+        )
 
 
 if __name__ == "__main__":

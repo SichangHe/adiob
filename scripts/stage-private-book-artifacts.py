@@ -21,6 +21,7 @@ DEFAULT_SEGMENT_PAGE_SIZE = 48
 CHUNK_TIMING_TOLERANCE_SEC = 0.05
 RELEASE_AUDIO_HOST = "github.com"
 RELEASE_AUDIO_PATH_PREFIX = "/SichangHe/adiob/releases/download/"
+SHA256 = re.compile(r"[0-9a-f]{64}")
 PAGE_HEADING = re.compile(
     r"^(introduction|prologue|epilogue|chapter\b|part\b|book\b|section\b|\d{1,3}\.)",
     re.IGNORECASE,
@@ -318,12 +319,16 @@ def generated_has_full_release_audio(
         return False
     try:
         segments = public_segments_from(book_id, manifest)
-        chunks = public_audio_chunks_from(book_id, source_manifest.parent, None, manifest)
+        chunks = public_audio_chunks_from(
+            book_id, source_manifest.parent, None, manifest
+        )
     except (KeyError, IndexError, TypeError, ValueError, SystemExit):
         return False
     if not chunks or not segments:
         return False
-    return abs(chunks[-1]["endSec"] - segments[-1]["endSec"]) <= CHUNK_TIMING_TOLERANCE_SEC
+    return (
+        abs(chunks[-1]["endSec"] - segments[-1]["endSec"]) <= CHUNK_TIMING_TOLERANCE_SEC
+    )
 
 
 def stage_generated_book(
@@ -374,7 +379,9 @@ def stage_generated_book(
     )
 
 
-def public_segments_from(book_id: str, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+def public_segments_from(
+    book_id: str, manifest: dict[str, Any]
+) -> list[dict[str, Any]]:
     segments = manifest.get("segments")
     if not isinstance(segments, list) or not segments:
         raise SystemExit(f"manifest has no public segments: {book_id}")
@@ -410,6 +417,15 @@ def public_audio_chunks_from(
         if url is None:
             raise SystemExit(f"manifest audio chunk is not a release URL: {book_id}")
         public_path = url
+        sha256 = chunk.get("sha256")
+        size_bytes = chunk.get("sizeBytes")
+        if (
+            not isinstance(sha256, str)
+            or SHA256.fullmatch(sha256) is None
+            or not isinstance(size_bytes, int)
+            or size_bytes <= 0
+        ):
+            raise SystemExit(f"manifest audio chunk integrity is invalid: {book_id}")
         start_sec = float(chunk["startSec"])
         end_sec = float(chunk["endSec"])
         if (
@@ -426,6 +442,8 @@ def public_audio_chunks_from(
                 "durationSec": round(end_sec - start_sec, 3),
                 "segmentStart": int(chunk.get("segmentStart", 0)),
                 "segmentCount": int(chunk.get("segmentCount", 0)),
+                "sha256": sha256,
+                "sizeBytes": size_bytes,
             }
         )
         previous_end_sec = end_sec

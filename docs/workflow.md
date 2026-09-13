@@ -1,4 +1,6 @@
 voice and publication workflow
+(authored by agents unless marked 🧑)
+
 - lawful input boundary
   - use public-domain, permissively licensed, or user-provided text and cover assets
   - keep public deployments limited to content the repo owner may distribute
@@ -59,37 +61,43 @@ voice and publication workflow
     - `http://127.0.0.1:8000/field-notes-819a/`
   - these assets are not entries in `data/books.json` and are not release assets
   - release tooling refuses `localOnly` manifests and files under private `local/` or `owned-text/` roots
-- publish catalog audio
-  - use this to process every catalog entry into deployable audio
-  - command
-    - `scripts/process-private-book-release.py --private-root ../adiob-private-artifacts --all-books --release-tag audio-owned-chunks-v3 -R SichangHe/adiob --confirm-rights`
-  - use `--book-id <id>` instead of `--all-books` to process one book
-  - omit `--max-chars` for full-book audio
-    - `--max-chars 30000` intentionally makes an excerpt of roughly 30 minutes
-  - front matter is skipped by default
-    - this keeps title pages, tables of contents, biographies, and catalog preambles out of the generated reader
-    - pass `--include-front-matter` only when the front matter should be read aloud
-  - source paragraphs become manifest segments
-    - page boundaries and audio chunk boundaries therefore stay on complete paragraphs
-  - script steps
-    - builds a full ignored manifest under `local/owned-books/<book>`
-    - generates chunked Kokoro audio under `local/owned-books/<book>/chunks`
-    - uploads flat GitHub Release assets named `<book>-chunk-NNN.<ext>`
-    - rewrites `audioChunks[].path` to release URLs
-    - writes the linked manifest and catalog metadata under the artifact repo
-    - skips books that already have complete linked release chunks
-  - generated segment timings are rough batched timings
-    - this keeps deployment throughput practical for full books
-- mark generated private books public
-  - command
-    - `scripts/set-private-books-publish.py --private-root ../adiob-private-artifacts`
-  - this sets every private catalog entry to `publish: true`
-  - it refuses to write until every entry has full release-backed generated audio
-  - run the full-book release command first when any entry is still catalog-only
-- deploy generated private books
-  - after review, commit and push the private artifact repo
-  - update `.github/workflows/pages.yml` `PRIVATE_BOOK_ARTIFACT_REF` to that private commit SHA
-  - commit and push the public repo to deploy the linked catalog
+- sync private audiobook catalogs
+  - supported entry point
+    - audit: `scripts/publish-private-audiobooks.py --dry-run`
+    - apply locally: `scripts/publish-private-audiobooks.py --confirm-rights`
+    - publish releases and indexes: `scripts/publish-private-audiobooks.py --confirm-rights --publish`
+    - include the private internal index: add `--include-internal`
+  - intake boundary
+    - add each text to `books.json` or `internal-books.json` first
+    - include its id, text path, title, and author
+    - public release runs require the run-wide `--confirm-rights` decision
+    - internal entries require `internalOnly: true`, `rightsConfirmed: true`, and a release tag
+    - missing `publish` becomes `true` after complete audio is verified
+    - explicit `publish: false` keeps an entry text-only and skips its audio
+    - uncataloged text is not published because its identity, metadata, and rights are unknown
+  - control flow
+    - scans both private indexes and their referenced text files
+    - processes `books.json` entries unless they set `publish: false`
+    - skips `internal-books.json` audio by default
+      - `--include-internal` publishes its audio in the public ADIOB release repository
+      - `internalOnly` then protects only index visibility, not release asset access
+    - verifies existing remote asset names, sizes, and SHA-256 checksums
+    - repairs stale release URLs when the narration text and remote assets match
+    - generates only books without complete audio
+    - reuses local chunks whose text and voice fingerprints match
+    - uploads missing chunks and leaves matching release assets unchanged
+    - stops on a same-name asset with different content
+      - use `--clobber` only after reviewing the conflict
+    - records source identity and remote asset checksums in private manifests
+    - stages the Pages index and verifies internal-only ids are absent
+  - publish behavior
+    - requires clean `main` worktrees with the expected GitHub origins
+    - commits and pushes only generated manifests and private indexes
+    - pins the Pages workflow to that private commit
+    - commits and pushes the Pages index pin
+    - rerun after interruption
+      - completed chunks and commits are reused
+      - an inconsistent release or index stops the run
 - Pages staging includes every catalog entry
   - private entries without `publish: true` are text-only reader titles
   - text-only entries use generated transcript text when present
