@@ -338,10 +338,29 @@ def check_pages_ref_update(module: ModuleType) -> None:
         raise AssertionError("Pages private index pin was not updated exactly once")
     with tempfile.TemporaryDirectory(prefix="adiob-publish-path-check-") as tmp:
         root = Path(tmp)
-        (root / "books.json").write_text("{}", encoding="utf-8")
-        (root / "generated").mkdir()
-        if module.private_add_paths(root) != ["books.json", "generated"]:
-            raise AssertionError("optional internal catalog became a Git pathspec")
+        (root / "books.json").write_text(
+            '{"books":[{"id":"test-book"}]}', encoding="utf-8"
+        )
+        with patch.object(
+            module,
+            "git_status",
+            return_value=[" M books.json", "?? generated/test-book/manifest.json"],
+        ):
+            if module.changed_private_paths(root) != [
+                "books.json",
+                "generated/test-book/manifest.json",
+            ]:
+                raise AssertionError("catalog-derived private paths were not accepted")
+        for unsafe in (
+            ["?? generated/scratch"],
+            ["R  unrelated.txt -> generated/test-book/manifest.json"],
+        ):
+            with patch.object(module, "git_status", return_value=unsafe):
+                expect_exit(lambda: module.changed_private_paths(root))
+    result = type("Result", (), {"stdout": " M books.json\n"})()
+    with patch.object(module.subprocess, "run", return_value=result):
+        if module.command_output(["git", "status"], Path(".")) != " M books.json":
+            raise AssertionError("Git status lost its leading worktree column")
 
 
 def main() -> None:

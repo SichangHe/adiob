@@ -97,6 +97,7 @@ voice and publication workflow
     - commits and pushes the Pages index pin
     - rerun after interruption
       - completed chunks and commits are reused
+      - add `--resume` when prior generated/index changes remain in the private worktree
       - an inconsistent release or index stops the run
 - Pages staging includes every catalog entry
   - private entries without `publish: true` are text-only reader titles

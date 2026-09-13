@@ -45,6 +45,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Commit and push private indexes, then pin and push the Pages index.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume --publish with only prior generated/index changes present.",
+    )
     return parser.parse_args()
 
 
@@ -62,7 +67,7 @@ def resolved_private_root(value: Path) -> Path:
 
 def command_output(cmd: list[str], cwd: Path) -> str:
     result = subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
-    return result.stdout.strip()
+    return result.stdout.rstrip()
 
 
 def run(cmd: list[str], cwd: Path) -> None:
@@ -71,16 +76,22 @@ def run(cmd: list[str], cwd: Path) -> None:
 
 
 def git_status(repo: Path) -> list[str]:
-    output = command_output(["git", "status", "--porcelain=v1"], repo)
+    output = command_output(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"], repo
+    )
     return output.splitlines() if output else []
 
 
-def require_clean_main(repo: Path) -> None:
-    if git_status(repo):
-        raise SystemExit(f"publish requires a clean worktree: {repo}")
+def require_main(repo: Path) -> None:
     branch = command_output(["git", "branch", "--show-current"], repo)
     if branch != "main":
         raise SystemExit(f"publish requires the main branch: {repo}")
+
+
+def require_clean_main(repo: Path) -> None:
+    require_main(repo)
+    if git_status(repo):
+        raise SystemExit(f"publish requires a clean worktree: {repo}")
 
 
 def canonical_origin(repo: Path) -> str:
@@ -237,28 +248,50 @@ def verify_staged_index(private_root: Path) -> None:
             raise SystemExit("staged Pages index is inconsistent with private indexes")
 
 
+def expected_private_paths(private_root: Path) -> tuple[set[str], set[str]]:
+    files = {"books.json"}
+    chunk_roots = set()
+    for catalog in CATALOGS:
+        path = private_root / catalog
+        if not path.is_file():
+            continue
+        files.add(catalog)
+        for book in read_json(path).get("books", []):
+            book_id = book.get("id") if isinstance(book, dict) else None
+            if (
+                not isinstance(book_id, str)
+                or re.fullmatch(r"[a-z0-9][a-z0-9-]*", book_id) is None
+            ):
+                raise SystemExit(f"invalid book id in {path}")
+            root = f"generated/{book_id}"
+            files.update({f"{root}/manifest.json", f"{root}/cover.svg"})
+            chunk_roots.add(f"{root}/chunks/")
+    return files, chunk_roots
+
+
 def changed_private_paths(private_root: Path) -> list[str]:
+    allowed_files, allowed_deleted_chunk_roots = expected_private_paths(private_root)
     paths = []
     for line in git_status(private_root):
+        status = line[:2]
+        if status not in {" M", "M ", " A", "A ", " D", "D ", "??"}:
+            raise SystemExit(f"refusing unsupported private Git status: {line}")
         path = line[3:]
         if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        if path not in CATALOGS and not path.startswith("generated/"):
+            raise SystemExit(f"refusing private rename during publish: {path}")
+        deleted_chunk = status.strip() == "D" and any(
+            path.startswith(root) for root in allowed_deleted_chunk_roots
+        )
+        if path not in allowed_files and not deleted_chunk:
             raise SystemExit(f"refusing to commit unrelated private change: {path}")
         paths.append(path)
     return paths
 
 
-def private_add_paths(private_root: Path) -> list[str]:
-    paths = ["books.json", "generated"]
-    if (private_root / "internal-books.json").exists():
-        paths.append("internal-books.json")
-    return paths
-
-
 def commit_private(private_root: Path) -> str:
-    if changed_private_paths(private_root):
-        run(["git", "add", "--", *private_add_paths(private_root)], private_root)
+    changed = changed_private_paths(private_root)
+    if changed:
+        run(["git", "add", "--", *changed], private_root)
         run(
             ["git", "commit", "-m", "chore: sync audiobook releases and indexes"],
             private_root,
@@ -300,6 +333,8 @@ def main() -> None:
     args = parse_args()
     if args.publish and args.dry_run:
         raise SystemExit("choose either --dry-run or --publish")
+    if args.resume and not args.publish:
+        raise SystemExit("--resume requires --publish")
     if not args.dry_run and not args.confirm_rights:
         raise SystemExit("pass --confirm-rights before generating or publishing audio")
     public_root = repo_root()
@@ -307,7 +342,11 @@ def main() -> None:
     require_origins(public_root, private_root, args.repo)
     if args.publish:
         require_clean_main(public_root)
-        require_clean_main(private_root)
+        if args.resume:
+            require_main(private_root)
+            changed_private_paths(private_root)
+        else:
+            require_clean_main(private_root)
     catalogs = scan_catalog_texts(private_root)
     for catalog in catalogs:
         if catalog == "internal-books.json" and not args.include_internal:
