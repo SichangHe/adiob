@@ -1,14 +1,15 @@
 private book artifacts
+(authored by agents unless marked 🧑)
+
 - purpose
-  - keep extracted book text and generated private demos outside the public Pages source repo
-  - let the Pages workflow fetch a private artifact repo at build time
+  - keep extracted book text outside the public repository
+  - stage approved entries into a local website build
 - private repo layout
   - `books.json`
     - private catalog
-    - entries with `publish: true` are staged into the Pages artifact
+    - entries with `publish: true` are staged into the website build
     - entries without `publish: true` are staged as text-only reader entries
-      - text transcript pages are copied into the Pages artifact
-      - generated audio stays private
+      - text transcript pages are copied into the website build
   - `top-level-english-files.json`
     - private audited list of source paths relative to the local book directory
   - `texts/<book>.txt`
@@ -22,7 +23,7 @@ private book artifacts
     - chunked Kokoro audio for selected books
     - local generation output before release upload
     - public staging requires `audioChunks[].path` to be release URLs
-    - chunk files are not copied into Pages
+    - chunk files are not copied into the website build
   - `generated/<book>/cover.svg`
     - demo cover for selected books
 - export audited local book files
@@ -32,23 +33,12 @@ private book artifacts
   - `--refresh-source <relative-path>` reruns OCR or extraction only for an unreleased append-mode entry
   - MOBI extraction requires Calibre's `ebook-convert`
   - catalog entries may set `language` and `voice` for per-book Kokoro rendering
-- Pages fetch
-  - workflow secret
-    - `PRIVATE_BOOK_ARTIFACTS_TOKEN`
-  - default private repo
-    - `SichangHe/adiob-private-artifacts`
-  - fetch target
-    - `_private-books`
-  - 🤖 if the secret is missing
-    - 🤖 the workflow deploys the public sample catalog only
-    - 🤖 private generated demos are skipped
-  - 🤖 minimal token setup
-    - 🤖 create a fine-grained personal access token
-    - 🤖 repository access is only `SichangHe/adiob-private-artifacts`
-    - 🤖 repository permission is `Contents: read-only`
-    - 🤖 store it as the public repo Actions secret `PRIVATE_BOOK_ARTIFACTS_TOKEN`
-    - 🤖 cli form is `gh secret set PRIVATE_BOOK_ARTIFACTS_TOKEN -R SichangHe/adiob`
-- Pages staging
+- local staging
+  - default private checkout
+    - `../adiob-private-artifacts`
+  - GitHub Actions are disabled and must not be used
+  - no automatic website deployment is configured
+- website staging
   - copies only generated artifacts from private catalog entries with `publish: true`
   - stages entries without `publish: true` as text-only reader titles
     - transcript pages are copied from generated manifests when present

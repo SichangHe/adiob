@@ -1,5 +1,7 @@
 # adiob
 
+(authored by agents unless marked 🧑)
+
 `adiob` is a small static audiobook reader prototype for GitHub Pages.
 
 It assumes audio has already been generated and aligned to text. The page loads a book manifest, plays a local audio file, highlights the current sentence, and lets a reader seek by sentence.
@@ -60,7 +62,9 @@ scripts/publish-release-audio.sh --confirm-rights -R OWNER/REPO audio-small-walk
 
 The release script requires `origin` to match `OWNER/REPO` before a real upload. Add `--clobber` only when replacing an existing release asset is intended.
 
-The Pages UI plays `audioChunks` when present. Chunk paths can be manifest-relative files or GitHub Release asset URLs. Without chunks, it tries `releaseAudio.url` first and falls back to `audio` if the release asset cannot be loaded. The GitHub Pages workflow is in `.github/workflows/pages.yml`.
+The reader UI plays `audioChunks` when present. Chunk paths can be manifest-relative files or public GitHub Release asset URLs. Without chunks, it tries `releaseAudio.url` first and falls back to `audio` if the release asset cannot be loaded. UI catalog membership controls which books appear; it does not restrict direct access to release assets.
+
+GitHub Actions are disabled for this repository. Build and verify the combined site locally as documented in `docs/workflow.md`; no automatic website deployment is configured.
 
 The `-10` and `+10` buttons seek by seconds. Use the Speed menu to change playback tempo in the browser without regenerating audio.
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -17,9 +16,6 @@ DEFAULT_PRIVATE_ROOT = Path("../adiob-private-artifacts")
 DEFAULT_RELEASE_REPO = "SichangHe/adiob"
 PRIVATE_REPO = "SichangHe/adiob-private-artifacts"
 CATALOGS = ("books.json", "internal-books.json")
-PRIVATE_ARTIFACT_REF = re.compile(
-    r"(?m)^(\s*PRIVATE_BOOK_ARTIFACT_REF:\s*)[0-9a-f]{40}(\s*)$"
-)
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,19 +32,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
-        "--include-internal",
-        action="store_true",
-        help="Publish internal-catalog audio in the public ADIOB release repository.",
-    )
-    parser.add_argument(
         "--publish",
         action="store_true",
-        help="Commit and push private indexes, then pin and push the Pages index.",
+        help="Commit and push private release metadata and indexes.",
     )
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume --publish with only prior generated/index changes present.",
+        help="Resume --publish after an interrupted run.",
+    )
+    parser.add_argument(
+        "--accept-resume-changes",
+        action="store_true",
+        help="Confirm that existing catalog-derived changes were reviewed.",
     )
     return parser.parse_args()
 
@@ -288,7 +284,7 @@ def changed_private_paths(private_root: Path) -> list[str]:
     return paths
 
 
-def commit_private(private_root: Path) -> str:
+def commit_private(private_root: Path) -> None:
     changed = changed_private_paths(private_root)
     if changed:
         run(["git", "add", "--", *changed], private_root)
@@ -297,35 +293,6 @@ def commit_private(private_root: Path) -> str:
             private_root,
         )
         run(["git", "push", "origin", "main"], private_root)
-    return command_output(["git", "rev-parse", "HEAD"], private_root)
-
-
-def update_pages_ref(private_commit: str) -> bool:
-    path = repo_root() / ".github/workflows/pages.yml"
-    current = path.read_text(encoding="utf-8")
-    updated, n_replacements = PRIVATE_ARTIFACT_REF.subn(
-        rf"\g<1>{private_commit}\g<2>", current
-    )
-    if n_replacements != 1:
-        raise SystemExit("Pages workflow must contain exactly one pinned private ref")
-    if updated == current:
-        return False
-    with tempfile.NamedTemporaryFile(
-        "w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
-    ) as tmp:
-        tmp.write(updated)
-        tmp_path = Path(tmp.name)
-    os.replace(tmp_path, path)
-    return True
-
-
-def commit_public_index(private_commit: str) -> None:
-    if update_pages_ref(private_commit):
-        run(["git", "add", "--", ".github/workflows/pages.yml"], repo_root())
-        run(["git", "commit", "-m", "chore: publish audiobook index"], repo_root())
-    if git_status(repo_root()):
-        raise SystemExit("refusing to push public repo with unrelated changes")
-    run(["git", "push", "origin", "main"], repo_root())
 
 
 # 🧑 "Have one script that scans the private repo for texts. Convert any that doesn't have audio already. Put them on releases. And then include them in indexes."
@@ -335,6 +302,8 @@ def main() -> None:
         raise SystemExit("choose either --dry-run or --publish")
     if args.resume and not args.publish:
         raise SystemExit("--resume requires --publish")
+    if args.accept_resume_changes and not args.resume:
+        raise SystemExit("--accept-resume-changes requires --resume")
     if not args.dry_run and not args.confirm_rights:
         raise SystemExit("pass --confirm-rights before generating or publishing audio")
     public_root = repo_root()
@@ -344,22 +313,24 @@ def main() -> None:
         require_clean_main(public_root)
         if args.resume:
             require_main(private_root)
-            changed_private_paths(private_root)
+            existing_changes = changed_private_paths(private_root)
+            if existing_changes and not args.accept_resume_changes:
+                raise SystemExit(
+                    "review the existing private diff, then pass "
+                    "--accept-resume-changes to include it"
+                )
         else:
             require_clean_main(private_root)
     catalogs = scan_catalog_texts(private_root)
     for catalog in catalogs:
-        if catalog == "internal-books.json" and not args.include_internal:
-            print("skip internal-books.json: public release publication not requested")
-            continue
         process_catalog(args, private_root, catalog)
     if args.dry_run:
         return
     set_public_index(private_root, False)
     verify_staged_index(private_root)
+    # 🧑 "Do not use GitHub actions at all."
     if args.publish:
-        private_commit = commit_private(private_root)
-        commit_public_index(private_commit)
+        commit_private(private_root)
 
 
 if __name__ == "__main__":

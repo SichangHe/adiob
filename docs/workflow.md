@@ -64,23 +64,22 @@ voice and publication workflow
 - sync private audiobook catalogs
   - supported entry point
     - audit: `scripts/publish-private-audiobooks.py --dry-run`
-    - apply locally: `scripts/publish-private-audiobooks.py --confirm-rights`
-    - publish releases and indexes: `scripts/publish-private-audiobooks.py --confirm-rights --publish`
-    - include the private internal index: add `--include-internal`
+    - publish release assets and update local indexes: `scripts/publish-private-audiobooks.py --confirm-rights`
+    - also commit and push private indexes: `scripts/publish-private-audiobooks.py --confirm-rights --publish`
   - intake boundary
     - add each text to `books.json` or `internal-books.json` first
     - include its id, text path, title, and author
     - public release runs require the run-wide `--confirm-rights` decision
-    - internal entries require `internalOnly: true`, `rightsConfirmed: true`, and a release tag
+    - internal entries require `rightsConfirmed: true` and a release tag
     - missing `publish` becomes `true` after complete audio is verified
     - explicit `publish: false` keeps an entry text-only and skips its audio
     - uncataloged text is not published because its identity, metadata, and rights are unknown
   - control flow
     - scans both private indexes and their referenced text files
     - processes `books.json` entries unless they set `publish: false`
-    - skips `internal-books.json` audio by default
-      - `--include-internal` publishes its audio in the public ADIOB release repository
-      - `internalOnly` then protects only index visibility, not release asset access
+    - processes `internal-books.json` entries in the public ADIOB release repository
+      - catalog membership excludes them from the website index
+      - release assets remain public even when the UI does not list the book
     - verifies existing remote asset names, sizes, and SHA-256 checksums
     - repairs stale release URLs when the narration text and remote assets match
     - generates only books without complete audio
@@ -89,17 +88,18 @@ voice and publication workflow
     - stops on a same-name asset with different content
       - use `--clobber` only after reviewing the conflict
     - records source identity and remote asset checksums in private manifests
-    - stages the Pages index and verifies internal-only ids are absent
+    - stages the website index and verifies internal-catalog ids are absent
   - publish behavior
     - requires clean `main` worktrees with the expected GitHub origins
     - commits and pushes only generated manifests and private indexes
-    - pins the Pages workflow to that private commit
-    - commits and pushes the Pages index pin
+    - stages and verifies the website index locally
+    - does not push the public repository or deploy the website
     - rerun after interruption
       - completed chunks and commits are reused
       - add `--resume` when prior generated/index changes remain in the private worktree
+      - inspect the private diff, then add `--accept-resume-changes` to commit those pre-existing changes
       - an inconsistent release or index stops the run
-- Pages staging includes every catalog entry
+- website staging includes every `books.json` entry
   - private entries without `publish: true` are text-only reader titles
   - text-only entries use generated transcript text when present
   - text-only entries use private text when no generated manifest exists
@@ -121,12 +121,17 @@ voice and publication workflow
   - overwrite an existing release asset only when intended
     - add `--clobber`
   - non-dry-run publication requires `origin` to match `OWNER/REPO`
-- publish pages
-  - source: GitHub Pages custom workflow docs
-    - https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
-  - this repo uses `.github/workflows/pages.yml`
-  - the workflow copies static files into `_site`, uploads the Pages artifact, and deploys it
-  - after the release script updates `releaseAudio.url`, commit and push `main`
+- website deployment
+  - GitHub Actions are disabled and must not be used
+  - no automatic website deployment is configured
+  - GitHub says, "Your GitHub Pages site will always be deployed with a GitHub Actions workflow run, even if you've configured your GitHub Pages site to be built using a different CI tool."
+    - https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site
+  - therefore the existing GitHub Pages site stays at its last deployment while Actions remain disabled
+  - local staging and verification remain supported
+    - copy `index.html`, `field-notes-819a`, `ASSET-LICENSE.md`, `LICENSE`, `data`, `media`, and `src` into ignored `_site/`
+    - `python3 scripts/stage-private-book-artifacts.py --private-root ../adiob-private-artifacts --site-root _site --reader-path field-notes-819a`
+    - `node scripts/check-playback-routing.mjs`
+    - `python3 scripts/serve-local.py 8000 --directory _site`
 - static data contract
   - `audioChunks` is preferred when present
   - each audio chunk has `path`, `startSec`, and `endSec`

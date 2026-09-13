@@ -741,15 +741,16 @@ def process_book(
 ) -> None:
     book_id = str(book["id"])
     release = book.get("release")
+    # 🧑 “The GH release is public, but the UI access is always internal. ... Rid the unnecessary internalOnly mark.”
     if catalog_path.name == "internal-books.json" and (
-        book.get("internalOnly") is not True
-        or book.get("rightsConfirmed") is not True
+        book.get("rightsConfirmed") is not True
         or not isinstance(release, dict)
         or not isinstance(release.get("tag"), str)
+        or not release["tag"]
     ):
         raise SystemExit(
-            "internal catalog entry must explicitly confirm internal use, rights, "
-            f"and a release tag: {book_id}"
+            "internal catalog entry must explicitly confirm rights and a release tag: "
+            f"{book_id}"
         )
     tag = book_release_tag(args, private_root, book)
     text_path = require_catalog_text(private_root, book)

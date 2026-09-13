@@ -331,11 +331,51 @@ def check_release_conflict(module: ModuleType) -> None:
             )
 
 
-def check_pages_ref_update(module: ModuleType) -> None:
-    value = "          PRIVATE_BOOK_ARTIFACT_REF: " + "a" * 40 + "\n"
-    updated, count = module.PRIVATE_ARTIFACT_REF.subn(rf"\g<1>{'b' * 40}\g<2>", value)
-    if count != 1 or "b" * 40 not in updated:
-        raise AssertionError("Pages private index pin was not updated exactly once")
+def check_internal_release_policy(module: ModuleType) -> None:
+    with tempfile.TemporaryDirectory(prefix="adiob-internal-release-check-") as tmp:
+        private_root = Path(tmp)
+        catalog_path = private_root / "internal-books.json"
+        book = {
+            "id": "test-book",
+            "text": "texts/test-book.txt",
+            "rightsConfirmed": True,
+            "release": {"tag": "internal-audio-v1"},
+        }
+        args = type("Args", (), {"release_tag": None, "force": False})()
+        with (
+            patch.object(module, "require_catalog_text", return_value=Path("text")),
+            patch.object(module, "existing_release_assets", return_value={}),
+            patch.object(module, "reconcile_existing_manifest", return_value=True),
+        ):
+            module.process_book(
+                ModuleType("builder"),
+                args,
+                private_root,
+                catalog_path,
+                {"books": [book]},
+                "SichangHe/adiob",
+                book,
+                {},
+            )
+        for invalid in (
+            {**book, "rightsConfirmed": False},
+            {**book, "release": {"tag": ""}},
+        ):
+            expect_exit(
+                lambda invalid=invalid: module.process_book(
+                    ModuleType("builder"),
+                    args,
+                    private_root,
+                    catalog_path,
+                    {"books": [invalid]},
+                    "SichangHe/adiob",
+                    invalid,
+                    {},
+                )
+            )
+
+
+def check_publisher_boundaries(module: ModuleType) -> None:
     with tempfile.TemporaryDirectory(prefix="adiob-publish-path-check-") as tmp:
         root = Path(tmp)
         (root / "books.json").write_text(
@@ -363,6 +403,118 @@ def check_pages_ref_update(module: ModuleType) -> None:
             raise AssertionError("Git status lost its leading worktree column")
 
 
+def check_catalog_command_modes(module: ModuleType) -> None:
+    args = type(
+        "Args",
+        (),
+        {
+            "repo": "SichangHe/adiob",
+            "confirm_rights": True,
+            "clobber": False,
+            "dry_run": False,
+        },
+    )()
+    with patch.object(module, "run") as run:
+        module.process_catalog(args, Path("/private"), "books.json")
+    command = run.call_args.args[0]
+    if "--confirm-rights" not in command or "--dry-run" in command:
+        raise AssertionError("non-dry catalog processing was not publication-capable")
+    args.confirm_rights = False
+    args.dry_run = True
+    with patch.object(module, "run") as run:
+        module.process_catalog(args, Path("/private"), "books.json")
+    command = run.call_args.args[0]
+    if "--dry-run" not in command or "--confirm-rights" in command:
+        raise AssertionError("catalog audit was not read-only")
+
+
+def check_resume_requires_review(module: ModuleType) -> None:
+    with tempfile.TemporaryDirectory(prefix="adiob-resume-review-check-") as tmp:
+        public_root = Path(tmp) / "public"
+        private_root = Path(tmp) / "private"
+        public_root.mkdir()
+        private_root.mkdir()
+        args = type(
+            "Args",
+            (),
+            {
+                "publish": True,
+                "dry_run": False,
+                "resume": True,
+                "accept_resume_changes": False,
+                "confirm_rights": True,
+                "repo": "SichangHe/adiob",
+                "private_root": private_root,
+            },
+        )()
+        with (
+            patch.object(module, "parse_args", return_value=args),
+            patch.object(module, "repo_root", return_value=public_root),
+            patch.object(module, "resolved_private_root", return_value=private_root),
+            patch.object(module, "require_origins"),
+            patch.object(module, "require_clean_main"),
+            patch.object(module, "require_main"),
+            patch.object(module, "changed_private_paths", return_value=["books.json"]),
+        ):
+            expect_exit(module.main)
+
+
+def check_publication_is_private_repo_only(module: ModuleType) -> None:
+    workflows = module.repo_root() / ".github/workflows"
+    if workflows.is_dir() and any(workflows.iterdir()):
+        raise AssertionError("GitHub Actions workflow remains enabled")
+    with tempfile.TemporaryDirectory(prefix="adiob-private-publish-check-") as tmp:
+        public_root = Path(tmp) / "public"
+        private_root = Path(tmp) / "private"
+        public_root.mkdir()
+        private_root.mkdir()
+        args = type(
+            "Args",
+            (),
+            {
+                "publish": True,
+                "dry_run": False,
+                "resume": False,
+                "accept_resume_changes": False,
+                "confirm_rights": True,
+                "repo": "SichangHe/adiob",
+                "private_root": private_root,
+            },
+        )()
+        with (
+            patch.object(module, "parse_args", return_value=args),
+            patch.object(module, "repo_root", return_value=public_root),
+            patch.object(module, "resolved_private_root", return_value=private_root),
+            patch.object(module, "require_origins"),
+            patch.object(module, "require_clean_main"),
+            patch.object(
+                module,
+                "scan_catalog_texts",
+                return_value=["books.json", "internal-books.json"],
+            ),
+            patch.object(module, "process_catalog") as process_catalog,
+            patch.object(module, "set_public_index"),
+            patch.object(module, "verify_staged_index"),
+            patch.object(module, "changed_private_paths", return_value=["books.json"]),
+            patch.object(module, "run") as run,
+        ):
+            module.main()
+        if not run.call_args_list:
+            raise AssertionError("private publication did not commit its index")
+        processed = [call.args[2] for call in process_catalog.call_args_list]
+        if processed != ["books.json", "internal-books.json"]:
+            raise AssertionError("publication did not process both private catalogs")
+        if any(call.args[1] != private_root for call in run.call_args_list):
+            raise AssertionError("publication invoked Git in the public repository")
+        pushes = [
+            call
+            for call in run.call_args_list
+            if call.args[0] == ["git", "push", "origin", "main"]
+        ]
+        if len(pushes) != 1:
+            raise AssertionError("publication did not make exactly one private push")
+
+
 def main() -> None:
     module = load_extractor()
     check_output_boundary(module)
@@ -373,7 +525,12 @@ def main() -> None:
     check_release_voice(release)
     check_release_integrity_relink(release)
     check_release_conflict(release)
-    check_pages_ref_update(load_publisher())
+    check_internal_release_policy(release)
+    publisher = load_publisher()
+    check_publisher_boundaries(publisher)
+    check_catalog_command_modes(publisher)
+    check_resume_requires_review(publisher)
+    check_publication_is_private_repo_only(publisher)
 
 
 if __name__ == "__main__":
