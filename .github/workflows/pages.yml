@@ -1,0 +1,51 @@
+name: pages
+
+# 🧑 "Okay, you do need GitHub action to deploy the site. Reinstate it"
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+      - name: check playback routing
+        run: node scripts/check-playback-routing.mjs
+      - name: fetch private book artifacts
+        env:
+          PRIVATE_BOOK_ARTIFACT_REPO: SichangHe/adiob-private-artifacts
+          PRIVATE_BOOK_ARTIFACT_REF: 406b177f61a88147336eb0f308e8485739aff8da
+          PRIVATE_BOOK_ARTIFACTS_TOKEN: ${{ secrets.PRIVATE_BOOK_ARTIFACTS_TOKEN }}
+        run: |
+          scripts/fetch-private-book-artifacts.sh _private-books
+          test -f _private-books/books.json
+          test -f _private-books/internal-books.json
+      - name: prepare static site
+        run: |
+          mkdir _site
+          cp -R index.html field-notes-819a ASSET-LICENSE.md LICENSE data media src _site/
+          python3 scripts/stage-private-book-artifacts.py --private-root _private-books --site-root _site --reader-path field-notes-819a
+      - name: setup pages
+        uses: actions/configure-pages@v5
+      - name: upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

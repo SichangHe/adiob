@@ -64,7 +64,7 @@ The release script requires `origin` to match `OWNER/REPO` before a real upload.
 
 The internal reader UI plays `audioChunks` when present. Chunk paths can be manifest-relative files or public GitHub Release asset URLs. Without chunks, it tries `releaseAudio.url` first and falls back to `audio` if the release asset cannot be loaded. Entries from both private catalogs appear in the reader; UI access does not restrict direct access to release assets.
 
-GitHub Actions are disabled for this repository. Build and verify the combined site locally as documented in `docs/workflow.md`; no automatic website deployment is configured.
+GitHub Actions stages both private catalogs and deploys the combined site to GitHub Pages. The repository secret `PRIVATE_BOOK_ARTIFACTS_TOKEN` must read the private artifact repository. The publication entry point pins each deployment to the private commit it verified; see `docs/workflow.md`.
 
 The `-10` and `+10` buttons seek by seconds. Use the Speed menu to change playback tempo in the browser without regenerating audio.
 

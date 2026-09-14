@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -16,6 +17,9 @@ DEFAULT_PRIVATE_ROOT = Path("../adiob-private-artifacts")
 DEFAULT_RELEASE_REPO = "SichangHe/adiob"
 PRIVATE_REPO = "SichangHe/adiob-private-artifacts"
 CATALOGS = ("books.json", "internal-books.json")
+PRIVATE_ARTIFACT_REF = re.compile(
+    r"(?m)^(\s*PRIVATE_BOOK_ARTIFACT_REF:\s*)[0-9a-f]{40}(\s*)$"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--publish",
         action="store_true",
-        help="Commit and push private release metadata and indexes.",
+        help="Commit and push private indexes and the pinned Pages deployment.",
     )
     parser.add_argument(
         "--resume",
@@ -290,7 +294,7 @@ def changed_private_paths(private_root: Path) -> list[str]:
     return paths
 
 
-def commit_private(private_root: Path) -> None:
+def commit_private(private_root: Path) -> str:
     changed = changed_private_paths(private_root)
     if changed:
         run(["git", "add", "--", *changed], private_root)
@@ -298,7 +302,44 @@ def commit_private(private_root: Path) -> None:
             ["git", "commit", "-m", "chore: sync audiobook releases and indexes"],
             private_root,
         )
-        run(["git", "push", "origin", "main"], private_root)
+    run(["git", "push", "origin", "main"], private_root)
+    private_commit = command_output(["git", "rev-parse", "HEAD"], private_root)
+    remote_commit = command_output(
+        ["git", "rev-parse", "refs/remotes/origin/main"], private_root
+    )
+    if remote_commit != private_commit:
+        raise SystemExit("private origin/main does not match the deployment commit")
+    return private_commit
+
+
+def update_pages_ref(private_commit: str) -> bool:
+    if re.fullmatch(r"[0-9a-f]{40}", private_commit) is None:
+        raise SystemExit("private commit must be a full lowercase Git SHA")
+    path = repo_root() / ".github/workflows/pages.yml"
+    current = path.read_text(encoding="utf-8")
+    updated, n_replacements = PRIVATE_ARTIFACT_REF.subn(
+        rf"\g<1>{private_commit}\g<2>", current
+    )
+    if n_replacements != 1:
+        raise SystemExit("Pages workflow must contain exactly one pinned private ref")
+    if updated == current:
+        return False
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+    ) as tmp:
+        tmp.write(updated)
+        tmp_path = Path(tmp.name)
+    os.replace(tmp_path, path)
+    return True
+
+
+def commit_public_index(private_commit: str) -> None:
+    if update_pages_ref(private_commit):
+        run(["git", "add", "--", ".github/workflows/pages.yml"], repo_root())
+        run(["git", "commit", "-m", "chore: publish audiobook index"], repo_root())
+    if git_status(repo_root()):
+        raise SystemExit("refusing to push public repo with unrelated changes")
+    run(["git", "push", "origin", "main"], repo_root())
 
 
 # 🧑 "Have one script that scans the private repo for texts. Convert any that doesn't have audio already. Put them on releases. And then include them in indexes."
@@ -334,9 +375,10 @@ def main() -> None:
         return
     set_public_index(private_root, False)
     verify_staged_index(private_root)
-    # 🧑 "Do not use GitHub actions at all."
+    # 🧑 "Okay, you do need GitHub action to deploy the site. Reinstate it"
     if args.publish:
-        commit_private(private_root)
+        private_commit = commit_private(private_root)
+        commit_public_index(private_commit)
 
 
 if __name__ == "__main__":

@@ -412,6 +412,106 @@ def check_publisher_boundaries(module: ModuleType) -> None:
         if module.command_output(["git", "status"], Path(".")) != " M books.json":
             raise AssertionError("Git status lost its leading worktree column")
 
+    with tempfile.TemporaryDirectory(prefix="adiob-pages-ref-check-") as tmp:
+        root = Path(tmp)
+        workflow = root / ".github/workflows/pages.yml"
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text(
+            "PRIVATE_BOOK_ARTIFACT_REF: " + "a" * 40 + "\n", encoding="utf-8"
+        )
+        with patch.object(module, "repo_root", return_value=root):
+            if not module.update_pages_ref("b" * 40):
+                raise AssertionError("changed Pages private ref was not reported")
+            if workflow.read_text(encoding="utf-8") != (
+                "PRIVATE_BOOK_ARTIFACT_REF: " + "b" * 40 + "\n"
+            ):
+                raise AssertionError("Pages private ref was not updated exactly")
+            if module.update_pages_ref("b" * 40):
+                raise AssertionError("unchanged Pages private ref was reported changed")
+            expect_exit(lambda: module.update_pages_ref("short"))
+            workflow.write_text("name: pages\n", encoding="utf-8")
+            expect_exit(lambda: module.update_pages_ref("c" * 40))
+
+
+def check_pages_workflow(module: ModuleType) -> None:
+    workflow = (module.repo_root() / ".github/workflows/pages.yml").read_text(
+        encoding="utf-8"
+    )
+    refs = module.PRIVATE_ARTIFACT_REF.findall(workflow)
+    if len(refs) != 1:
+        raise AssertionError("Pages workflow lacks one full private commit pin")
+    required = (
+        "scripts/fetch-private-book-artifacts.sh _private-books",
+        "test -f _private-books/books.json",
+        "test -f _private-books/internal-books.json",
+        "scripts/stage-private-book-artifacts.py --private-root _private-books",
+        "uses: actions/deploy-pages@v4",
+    )
+    if any(value not in workflow for value in required):
+        raise AssertionError(
+            "Pages workflow does not stage and deploy private catalogs"
+        )
+
+
+def check_public_index_commit(module: ModuleType) -> None:
+    public_root = Path("/public")
+    with (
+        patch.object(module, "repo_root", return_value=public_root),
+        patch.object(module, "update_pages_ref", return_value=True),
+        patch.object(module, "git_status", return_value=[]),
+        patch.object(module, "run") as run,
+    ):
+        module.commit_public_index("b" * 40)
+    if [call.args for call in run.call_args_list] != [
+        (["git", "add", "--", ".github/workflows/pages.yml"], public_root),
+        (["git", "commit", "-m", "chore: publish audiobook index"], public_root),
+        (["git", "push", "origin", "main"], public_root),
+    ]:
+        raise AssertionError("Pages ref publication did not use the exact public path")
+
+    with (
+        patch.object(module, "repo_root", return_value=public_root),
+        patch.object(module, "update_pages_ref", return_value=False),
+        patch.object(module, "git_status", return_value=[" M README.md"]),
+        patch.object(module, "run") as run,
+    ):
+        expect_exit(lambda: module.commit_public_index("b" * 40))
+    if run.called:
+        raise AssertionError("public publication pushed unrelated changes")
+
+
+def check_private_commit_is_remote(module: ModuleType) -> None:
+    private_root = Path("/private")
+    with (
+        patch.object(module, "changed_private_paths", return_value=[]),
+        patch.object(module, "run") as run,
+        patch.object(module, "command_output", side_effect=["b" * 40, "b" * 40]),
+    ):
+        commit = module.commit_private(private_root)
+    if commit != "b" * 40:
+        raise AssertionError("private publication returned the wrong commit")
+    run.assert_called_once_with(["git", "push", "origin", "main"], private_root)
+
+    with (
+        patch.object(module, "changed_private_paths", return_value=[]),
+        patch.object(module, "run", side_effect=RuntimeError("push failed")),
+        patch.object(module, "command_output") as command_output,
+    ):
+        try:
+            module.commit_private(private_root)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("failed private push returned a deployment commit")
+    command_output.assert_not_called()
+
+    with (
+        patch.object(module, "changed_private_paths", return_value=[]),
+        patch.object(module, "run"),
+        patch.object(module, "command_output", side_effect=["b" * 40, "c" * 40]),
+    ):
+        expect_exit(lambda: module.commit_private(private_root))
+
 
 def check_catalog_command_modes(module: ModuleType) -> None:
     args = type(
@@ -477,10 +577,7 @@ def check_resume_requires_review(module: ModuleType) -> None:
             expect_exit(module.main)
 
 
-def check_publication_is_private_repo_only(module: ModuleType) -> None:
-    workflows = module.repo_root() / ".github/workflows"
-    if workflows.is_dir() and any(workflows.iterdir()):
-        raise AssertionError("GitHub Actions workflow remains enabled")
+def check_publication_updates_pages(module: ModuleType) -> None:
     with tempfile.TemporaryDirectory(prefix="adiob-private-publish-check-") as tmp:
         public_root = Path(tmp) / "public"
         private_root = Path(tmp) / "private"
@@ -513,24 +610,17 @@ def check_publication_is_private_repo_only(module: ModuleType) -> None:
             patch.object(module, "process_catalog") as process_catalog,
             patch.object(module, "set_public_index"),
             patch.object(module, "verify_staged_index"),
-            patch.object(module, "changed_private_paths", return_value=["books.json"]),
-            patch.object(module, "run") as run,
+            patch.object(
+                module, "commit_private", return_value="b" * 40
+            ) as commit_private,
+            patch.object(module, "commit_public_index") as commit_public_index,
         ):
             module.main()
-        if not run.call_args_list:
-            raise AssertionError("private publication did not commit its index")
         processed = [call.args[2] for call in process_catalog.call_args_list]
         if processed != ["books.json", "internal-books.json"]:
             raise AssertionError("publication did not process both private catalogs")
-        if any(call.args[1] != private_root for call in run.call_args_list):
-            raise AssertionError("publication invoked Git in the public repository")
-        pushes = [
-            call
-            for call in run.call_args_list
-            if call.args[0] == ["git", "push", "origin", "main"]
-        ]
-        if len(pushes) != 1:
-            raise AssertionError("publication did not make exactly one private push")
+        commit_private.assert_called_once_with(private_root)
+        commit_public_index.assert_called_once_with("b" * 40)
 
 
 def write_release_book(
@@ -695,9 +785,12 @@ def main() -> None:
     check_internal_release_policy(release)
     publisher = load_publisher()
     check_publisher_boundaries(publisher)
+    check_pages_workflow(publisher)
+    check_public_index_commit(publisher)
+    check_private_commit_is_remote(publisher)
     check_catalog_command_modes(publisher)
     check_resume_requires_review(publisher)
-    check_publication_is_private_repo_only(publisher)
+    check_publication_updates_pages(publisher)
     check_private_catalog_union()
 
 

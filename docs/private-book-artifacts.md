@@ -40,8 +40,8 @@ private book artifacts
 - local staging
   - default private checkout
     - `../adiob-private-artifacts`
-  - GitHub Actions are disabled and must not be used
-  - no automatic website deployment is configured
+  - the Pages workflow fetches a pinned private commit and stages both catalogs
+  - local staging uses the same script as the Pages workflow
 - website staging
   - merges `books.json` and `internal-books.json`
   - rejects duplicate book ids across catalogs

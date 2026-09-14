@@ -94,7 +94,10 @@ voice and publication workflow
     - requires clean `main` worktrees with the expected GitHub origins
     - commits and pushes only generated manifests and private indexes
     - stages and verifies the website index locally
-    - does not push the public repository or deploy the website
+    - confirms the private `HEAD` is pushed before using it as a deployment pin
+    - pins the Pages workflow to the verified private commit
+    - commits and pushes that pin in the public repository
+    - the resulting public push runs the Pages deployment
     - rerun after interruption
       - completed chunks and commits are reused
       - add `--resume` when prior generated/index changes remain in the private worktree
@@ -123,11 +126,11 @@ voice and publication workflow
     - add `--clobber`
   - non-dry-run publication requires `origin` to match `OWNER/REPO`
 - website deployment
-  - GitHub Actions are disabled and must not be used
-  - no automatic website deployment is configured
-  - GitHub says, "Your GitHub Pages site will always be deployed with a GitHub Actions workflow run, even if you've configured your GitHub Pages site to be built using a different CI tool."
-    - https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site
-  - therefore the existing GitHub Pages site stays at its last deployment while Actions remain disabled
+  - `.github/workflows/pages.yml` deploys the website after each push to `main`
+  - repository secret `PRIVATE_BOOK_ARTIFACTS_TOKEN` must read `SichangHe/adiob-private-artifacts`
+    - a missing or invalid secret fails before deployment instead of publishing an incomplete index
+  - the workflow fetches one full private commit and merges `books.json` and `internal-books.json`
+  - `PRIVATE_BOOK_ARTIFACT_REF` is immutable deployment input, not a moving branch
   - local staging and verification remain supported
     - copy `index.html`, `field-notes-819a`, `ASSET-LICENSE.md`, `LICENSE`, `data`, `media`, and `src` into ignored `_site/`
     - `python3 scripts/stage-private-book-artifacts.py --private-root ../adiob-private-artifacts --site-root _site --reader-path field-notes-819a`
