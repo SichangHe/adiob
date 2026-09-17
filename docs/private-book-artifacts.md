@@ -34,6 +34,7 @@ private book artifacts
   - `python3 scripts/export-private-book-artifacts.py --book-dir ../book --private-root ../adiob-private-artifacts --append --confirm-private-repo-output`
   - PDF, EPUB, DOCX, and MOBI inputs are supported
   - scanned PDFs use OCRmyPDF with Tesseract when no usable text layer exists
+  - Before OCR or text extraction for an audiobook, run getagentsmd get convert_listenable_text and follow its guidance. Convert tables and figures into prose descriptions instead of preserving columnar layout.
   - `--refresh-source <relative-path>` reruns OCR or extraction only for an unreleased append-mode entry
   - MOBI extraction requires Calibre's `ebook-convert`
   - catalog entries may set `language` and `voice` for per-book Kokoro rendering
