@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import textwrap
 import zipfile
@@ -53,6 +54,17 @@ def load_publisher() -> ModuleType:
     return module
 
 
+def load_cleaner() -> ModuleType:
+    path = Path(__file__).with_name("clean-private-book-texts.py")
+    spec = importlib.util.spec_from_file_location("private_book_cleaner", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_script(name: str, module_name: str) -> ModuleType:
     path = Path(__file__).with_name(name)
     spec = importlib.util.spec_from_file_location(module_name, path)
@@ -69,6 +81,56 @@ def expect_exit(fn: Callable[[], object]) -> None:
     except SystemExit:
         return
     raise AssertionError("expected SystemExit")
+
+
+def check_listenable_layout(module: ModuleType) -> None:
+    source = (
+        "Commentary on Chapter 4 109\n\n"
+        "FIGURE 4-1 The Wide World of Bonds 2002 1.2 2.7\n\n"
+        "Type Maturity Yield 1 year 1.2 5 years 2.7\n\n"
+        "From the end of 1999 through 2002, a $3,000 investment plus $100 "
+        "monthly made a $6,600 total outlay and lost 30.2%, less than 41.3%.\n\n"
+        "Keep this complete narrative sentence because it explains the figure in context. "
+        "• first choice • second choice\n"
+        "\nFor 2003, a single person earning $28,400 paid the bottom tax rate.\n"
+        "\nSee http://example.com/a/b/c/d/e/f/g for a prose explanation.\n"
+        "\n1. Keep the prose. 2. Spell out the list.\n"
+    )
+    text = module.listenable_text(
+        "the-intelligent-investor-benjamin-graham", source
+    )
+    expected = (
+        "Below is document The Intelligent Investor.\n\n"
+        "Figure 4-1, titled The Wide World of Bonds, presents the comparison "
+        "discussed in the surrounding text. Its visual row-and-column or "
+        "graphical layout has been replaced with this description for listening.\n\n"
+        "From the end of 1999 through 2002, a $3,000 investment plus $100 "
+        "monthly made a $6,600 total outlay and lost 30.2%, less than 41.3%.\n\n"
+        "Keep this complete narrative sentence because it explains the figure in context.\n\n"
+        "Bullet point: first choice\n\n"
+        "Bullet point: second choice\n\n"
+        "For 2003, a single person earning $28,400 paid the bottom tax rate.\n\n"
+        "See http://example.com/a/b/c/d/e/f/g for a prose explanation.\n\n"
+        "First, Keep the prose.\n\n"
+        "Second, Spell out the list.\n\n"
+        "Above was document The Intelligent Investor.\n"
+    )
+    if text != expected:
+        raise AssertionError("listening cleanup did not neutralize page layout")
+    with tempfile.TemporaryDirectory(prefix="adiob-cleaner-check-") as tmp:
+        source = Path(tmp) / "source.txt"
+        source.write_text("narrative\n", encoding="utf-8")
+        module.LISTENABLE_LINE_RANGES["guard-test"] = ((1, 1, None),)
+        module.LISTENABLE_SOURCE_SHA256["guard-test"] = "0" * 64
+        try:
+            expect_exit(
+                lambda: module.body_text(
+                    source, "guard-test", module.BookCut(1, 1, "test")
+                )
+            )
+        finally:
+            del module.LISTENABLE_LINE_RANGES["guard-test"]
+            del module.LISTENABLE_SOURCE_SHA256["guard-test"]
 
 
 def with_fake_repo(module: ModuleType, root: Path) -> None:
@@ -777,6 +839,7 @@ def main() -> None:
     check_output_boundary(module)
     check_epub_uri_paths(module)
     check_pdf_ocr_fallback(module)
+    check_listenable_layout(load_cleaner())
     check_exporter_boundaries(load_exporter())
     release = load_release_processor()
     check_release_voice(release)

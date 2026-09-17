@@ -59,6 +59,11 @@ SOURCE_METADATA = {
         "title": "The Intelligent Investor",
         "author": "Benjamin Graham",
     },
+    # 🧑 "OCR my new book the mythical man month and put the text in the usual place"
+    "mythical-man-month.pdf": {
+        "title": "The Mythical Man-Month",
+        "author": "Frederick P. Brooks Jr.",
+    },
     "dokumen.pub_the-man-who-solved-the-market-how-jim-simons-launched-the-quant-revolution-hardcovernbsped-073521798x-9780735217980.epub": {
         "title": "The Man Who Solved the Market",
         "author": "Gregory Zuckerman",
