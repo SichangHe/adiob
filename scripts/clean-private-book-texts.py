@@ -174,63 +174,145 @@ LISTENABLE_BOOK_TITLES = {
     "mythical-man-month": "The Mythical Man-Month",
     "the-intelligent-investor-benjamin-graham": "The Intelligent Investor",
 }
-LISTENABLE_LINE_RANGES: dict[str, tuple[tuple[int, int, str | None], ...]] = {
+DUPLICATE_HEADINGS = {"mythical-man-month": {"The Tar Pit"}}
+CUT_SOURCE_SHA256 = {
+    "mythical-man-month": "2c496b5a7e97cbd97ddd5eeb11544a0fd20da223be58ad090d6ac7c971ee5a8d",
+    "the-intelligent-investor-benjamin-graham": "a657a6372e8a480fe1a638836160202e8ed50389ef831e0e1d3d5f07ec29a9ac",
+}
+LISTENABLE_CONTENT_BLOCKS: dict[str, tuple[tuple[int, str, str | None], ...]] = {
     "mythical-man-month": (
-        (160, 185, None),
+        (26, "d85c22229650cc829df1f1625d252d70d670c182611dae65fa389543415b8e81", None),
         (
-            239,
-            269,
+            31,
+            "e6a09c0433548204d7e3be510e2646f9edf7c5354c53f3ac1547b2345d233ac6",
             "The diagram labeled Figure 1.1 shows how a program becomes a tested, documented "
             "programming product and an integrated programming-system "
             "component, with the complete programming-systems product "
             "combining both transformations.",
         ),
         (
-            434,
-            499,
+            66,
+            "4de5e0de363fc184ac8ed4cd68cd9377b50f8336399722ff13d96853787f78c5",
             "A reproduced restaurant menu illustrates the chapter's point "
             "that good work takes time. Its itemized visual layout has been "
             "replaced with this description for listening.",
         ),
-        (608, 612, "The chart labeled Figure 2.1 plots less completion time as independent workers are added to a perfectly partitionable task."),
-        (623, 630, "The chart labeled Figure 2.2 shows that adding workers does not shorten a task constrained to sequential steps."),
-        (640, 643, "The chart labeled Figure 2.3 shows diminishing time savings when a partitionable task also requires communication."),
-        (661, 667, "The chart labeled Figure 2.4 shows that complex interrelationships can erase the time saved by adding workers."),
-        (792, 825, "The charts labeled Figures 2.5 through 2.7 compare the planned schedule with two consequences of missing the first milestone."),
-        (870, 882, "The chart labeled Figure 2.8 shows that adding and training programmers after a delay can leave the project just as late."),
-        (1173, 1176, "The diagram labeled Figure 3.1 compares the many communication paths in an ordinary ten-person team with the simpler paths in a surgical team."),
-        (1567, 1591, "A chapter-opening illustration appears here in the source and has been omitted for listening."),
-        (1788, 1800, "A chapter-opening illustration appears here in the source and has been omitted for listening."),
-        (2559, 2566, "A chapter-opening illustration appears here in the source and has been omitted for listening."),
-        (2623, 2659, "The chart labeled Figure 8.1 graphs programming effort rising faster than program size, approximately with size to the power of one point five."),
-        (2720, 2741, "The table labeled Figure 8.2 summarizes four programming jobs, contrasting lower productivity for control programs with higher productivity for translators."),
-        (2762, 2768, "The charts labeled Figures 8.3 and 8.4 compare predicted and actual programming and debugging rates over time."),
-        (3401, 3413, "The diagram labeled Figure 11.1 shows parallel managerial and technical career ladders, with corresponding levels intended to have equal standing."),
-        (3484, 3489, "The chart labeled Figure 11.2 graphs bugs found per month across the months after a software release."),
-        (3671, 3676, "The chart labeled Figure 12.1 shows target-machine use staying low at first and then rising sharply as components become ready for debugging."),
-        (3909, 3921, "The table labeled Figure 12.2 compares four projects and indicates substantially higher productivity with conversational development than with batch development."),
-        (4322, 4325, "A chapter-opening illustration appears here in the source and has been omitted for listening."),
-        (4534, 4716, "The table labeled Figure 14.1 is a milestone report comparing scheduled and estimated dates. It exposes late approvals and tests so managers can act before small delays accumulate."),
         (
-            4896,
-            4925,
+            5,
+            "a6a319ff43265129be8546edfad9a3597368992705193968a02f8b18f320123c",
+            "The chart labeled Figure 2.1 plots less completion time as independent workers are added to a perfectly partitionable task.",
+        ),
+        (
+            8,
+            "8bd0e0347e61a56fd3a4ec3a7280d363f1a49445eef1c2d90cd0a9bb45bf24cd",
+            "The chart labeled Figure 2.2 shows that adding workers does not shorten a task constrained to sequential steps.",
+        ),
+        (
+            4,
+            "227209316f21d6903acb01659d400e05dfe3e0f37e9149bc917d1d43dbb0464a",
+            "The chart labeled Figure 2.3 shows diminishing time savings when a partitionable task also requires communication.",
+        ),
+        (
+            7,
+            "31e414f3cee32a6d891ea448a9e5463a360871e237ea7adb52918befe8737de1",
+            "The chart labeled Figure 2.4 shows that complex interrelationships can erase the time saved by adding workers.",
+        ),
+        (
+            34,
+            "164291fb12adb456283177ba15e27e8ca67854dfaa0d60e45831011ba37aee59",
+            "The charts labeled Figures 2.5 through 2.7 compare the planned schedule with two consequences of missing the first milestone.",
+        ),
+        (
+            13,
+            "4bd4ec21ad159da9aa7476da11479f09a028b8ca3dfe7821696e8c584d8405bd",
+            "The chart labeled Figure 2.8 shows that adding and training programmers after a delay can leave the project just as late.",
+        ),
+        (
+            4,
+            "3c82702bb4fe2031f6881f4fa5141e0f2f732c4a041ae3b617ec801cc6f564e5",
+            "The diagram labeled Figure 3.1 compares the many communication paths in an ordinary ten-person team with the simpler paths in a surgical team.",
+        ),
+        (
+            25,
+            "25112566c8bece4e060a1c4dab6c9a3eddeb60b3f1e2271a07ba5ab8a3ef514e",
+            "A chapter-opening illustration appears here in the source and has been omitted for listening.",
+        ),
+        (
+            13,
+            "6107bc3ada4832a6d191f23a73871e79fe56cda6eab304d12ce4ff8e004fd0b3",
+            "A chapter-opening illustration appears here in the source and has been omitted for listening.",
+        ),
+        (
+            8,
+            "84480f5010ece7445957b1ce1fef898f9a36f3e5b7fe894b2fd32456fa985064",
+            "A chapter-opening illustration appears here in the source and has been omitted for listening.",
+        ),
+        (
+            37,
+            "133ba1f3a8dad2be2b16cd2163ee3aaf0da7b61241c020bcdd8c73fba2492382",
+            "The chart labeled Figure 8.1 graphs programming effort rising faster than program size, approximately with size to the power of one point five.",
+        ),
+        (
+            22,
+            "e13141c9ced252e7f4f198db4c78bb30e40579b3c3b7692d9f64e631a5ce67a4",
+            "The table labeled Figure 8.2 summarizes four programming jobs, contrasting lower productivity for control programs with higher productivity for translators.",
+        ),
+        (
+            7,
+            "a4c667694828d9a65466a0470f5f0df151c3119c8587ffb769f2d2ed12b11670",
+            "The charts labeled Figures 8.3 and 8.4 compare predicted and actual programming and debugging rates over time.",
+        ),
+        (
+            13,
+            "c588aecec40badbc23ec731cfed23b324227afbff67cd41643cb05a231f9bcac",
+            "The diagram labeled Figure 11.1 shows parallel managerial and technical career ladders, with corresponding levels intended to have equal standing.",
+        ),
+        (
+            6,
+            "9da60e82978c9c5130262afb602570d5c60688f43710a96152ac5e4c0ecdacb1",
+            "The chart labeled Figure 11.2 graphs bugs found per month across the months after a software release.",
+        ),
+        (
+            6,
+            "0559ea3a270a5213dedb54d76a4ceebd63fcb1a1c9b555fa4696a9efe5229a6d",
+            "The chart labeled Figure 12.1 shows target-machine use staying low at first and then rising sharply as components become ready for debugging.",
+        ),
+        (
+            13,
+            "d149caa4076abee6920d0d8e1bf47bd98dbd054b069e152cca12fc700469baf8",
+            "The table labeled Figure 12.2 compares four projects and indicates substantially higher productivity with conversational development than with batch development.",
+        ),
+        (
+            4,
+            "1af5e86be1249e86891e8a7fa74670040f6dc7447eb34d5da167341b882d0af1",
+            "A chapter-opening illustration appears here in the source and has been omitted for listening.",
+        ),
+        (
+            183,
+            "bb42c4bd475ab253ca387078118dbf3f9926d410da281c32685ca72cc06db62f",
+            "The table labeled Figure 14.1 is a milestone report comparing scheduled and estimated dates. It exposes late approvals and tests so managers can act before small delays accumulate.",
+        ),
+        (
+            30,
+            "a28645f5b1a4f3be287c4d1c5986497d7a5ae03e2ccb81581267714bd23f164c",
             "The diagram labeled Figure 15.1 is a program-structure graph showing linked routines, "
             "modes, messages, and external variables. Its visual layout has "
             "been replaced with this description for listening.",
         ),
-        (5007, 5029, "A flow-chart fragment appears here in the source. Its unreadable visual layout has been omitted for listening."),
         (
-            5073,
-            5214,
+            23,
+            "bfbd379ed5ee65e49d7f07a61d31987cde65b33f4e04c108f3aac19b14e9d386",
+            "A flow-chart fragment appears here in the source. Its unreadable visual layout has been omitted for listening.",
+        ),
+        (
+            142,
+            "c6faa7efd871f8de8194b0c6e4892768e11d880f2a943123bc491c1e90cc00d4",
             "The listing labeled Figure 15.3 is a self-documenting program whose labels, "
             "names, indentation, and comments illustrate the techniques "
             "described in the surrounding text. The code layout has been "
             "replaced with this description for listening.",
         ),
     ),
-}
-LISTENABLE_SOURCE_SHA256 = {
-    "mythical-man-month": "2c496b5a7e97cbd97ddd5eeb11544a0fd20da223be58ad090d6ac7c971ee5a8d",
 }
 ORDINALS = (
     "",
@@ -258,15 +340,19 @@ ORDINALS = (
 LAYOUT_BLOCK = re.compile(
     r"^(TABLE|FIGURE|FIG\.)\s+([A-Za-z0-9.-]+)(?:\s+(.*))?$", re.IGNORECASE
 )
-PAGE_FURNITURE = re.compile(r"^(?:\d{1,3}\s+)?[A-Za-z0-9][A-Za-z0-9’'&, -]{2,80}\s+\d{1,3}$")
-LEADING_PAGE_FURNITURE = re.compile(
-    r"^\d{1,3}\s+[A-Za-z][A-Za-z0-9’'&, ?-]{2,80}$"
+PAGE_FURNITURE = re.compile(
+    r"^(?:\d{1,3}\s+)?[A-Za-z0-9][A-Za-z0-9’'&, -]{2,80}\s+\d{1,3}$"
 )
+LEADING_PAGE_FURNITURE = re.compile(r"^\d{1,3}\s+[A-Za-z][A-Za-z0-9’'&, ?-]{2,80}$")
 ROMAN_PAGE_FURNITURE = re.compile(
-    r"^(?:[ivxlcdm]+\s+[A-Za-z][A-Za-z ]+|[A-Za-z][A-Za-z ]+\s+[ivxlcdm]+)$",
+    r"^(?:[ivxlcdm]{2,}\s+[A-Za-z][A-Za-z ]+|[A-Za-z][A-Za-z ]+\s+[ivxlcdm]{2,})$",
     re.IGNORECASE,
 )
-DATA_HEADER = re.compile(r"^(?:Standard & Poor’s )?DJIA\s+500-Stock Composite$")
+DATA_HEADER = re.compile(
+    r"^(?:Standard &(?:amp;)? Poor’s )?DJIA\s+500-Stock Composite$"
+)
+NUMBER_TOKEN = re.compile(r"(?<!\w)[+–−-]?\$?\d+(?:[.,/]\d+)*(?:%|\b)")
+PROSE_WORD = re.compile(r"\b[A-Za-z][A-Za-z’'-]*\b")
 
 LINE_FIXES: dict[str, dict[int, str | None]] = {
     "man-s-search-for-meaning": {
@@ -381,65 +467,93 @@ def paragraph_text(lines: list[str]) -> str:
     return remove_artifacts(" ".join(parts))
 
 
+def content_blocks(
+    source: Path, book_id: str, cut: BookCut
+) -> dict[int, tuple[int, str | None]]:
+    blocks = LISTENABLE_CONTENT_BLOCKS.get(book_id, ())
+    if not blocks:
+        return {}
+    source_lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    resolved: dict[int, tuple[int, str | None]] = {}
+    for line_count, expected_sha256, replacement in blocks:
+        starts = [
+            index + 1
+            for index in range(cut.start_line - 1, cut.end_line - line_count + 1)
+            if hashlib.sha256(
+                "".join(source_lines[index : index + line_count]).encode()
+            ).hexdigest()
+            == expected_sha256
+        ]
+        if len(starts) != 1:
+            raise SystemExit(
+                f"listening cleanup block {expected_sha256} matched {len(starts)} times: "
+                f"{source}"
+            )
+        start_line = starts[0]
+        end_line = start_line + line_count - 1
+        if any(
+            start_line <= end and existing_start <= end_line
+            for existing_start, (end, _) in resolved.items()
+        ):
+            raise SystemExit(f"overlapping listening cleanup blocks: {source}")
+        resolved[start_line] = (end_line, replacement)
+    return resolved
+
+
 def layout_description(paragraph: str) -> str | None:
     match = LAYOUT_BLOCK.fullmatch(paragraph)
     if match is None:
         return None
-    kind, identifier, content = match.groups()
-    caption = ""
-    if content:
-        caption = re.split(r"\s(?=[+–−-]?\$?\d)", content, maxsplit=1)[0]
-        caption = " ".join(caption.split()[:12]).rstrip(" ,.;:")
-        words = re.findall(r"[A-Za-z][A-Za-z’'-]*", caption)
-        uppercase_words = [word for word in words if len(word) >= 4 and word.isupper()]
-        incomplete_endings = {"and", "at", "between", "for", "from", "in", "of", "the", "to"}
-        if (
-            not 3 <= len(words) <= 12
-            or len(uppercase_words) >= 2
-            or words[-1].casefold() in incomplete_endings
-        ):
-            caption = ""
+    kind, identifier, _ = match.groups()
+    identifier = identifier.rstrip(".")
+    if not identifier:
+        return (
+            "An unlabeled visual layout appears here in the source and has been "
+            "omitted for listening."
+        )
     label = "Figure" if kind.casefold().startswith("fig") else "Table"
     name = f"{label} {identifier}"
-    if caption:
-        name += f", titled {caption}"
     return (
-        f"{name}, presents the comparison discussed in the surrounding text. "
-        "Its visual row-and-column or graphical layout has been replaced with "
-        "this description for listening."
+        f"{name} is a visual layout in the source. "
+        "Its graphical or row-and-column content has been omitted for listening; "
+        "the surrounding prose provides the discussion."
     )
 
 
 def narrative_paragraph(paragraph: str) -> bool:
-    words = re.findall(r"\b[\w’'-]+\b", paragraph)
-    letters = sum(character.isalpha() for character in paragraph)
+    numbers = NUMBER_TOKEN.findall(paragraph)
+    words = PROSE_WORD.findall(NUMBER_TOKEN.sub(" ", paragraph))
     return (
-        len(words) >= 10
+        len(words) + len(numbers) >= 10
+        and len(words) >= 5
+        and len(words) >= len(numbers)
         and re.search(r"[.!?](?:\s|$)", paragraph) is not None
-        and letters >= len(paragraph) // 2
     )
 
 
 def numeric_layout(paragraph: str) -> bool:
-    numbers = re.findall(r"(?<!\w)[+–−-]?\$?\d+(?:[.,/]\d+)*(?:%|\b)", paragraph)
-    words = re.findall(r"\b[\w’'-]+\b", paragraph)
+    numbers = NUMBER_TOKEN.findall(paragraph)
+    words = PROSE_WORD.findall(NUMBER_TOKEN.sub(" ", paragraph))
     return (
         len(numbers) >= 2
-        and len(numbers) * 2 >= len(words)
-        and re.search(r"[.!?](?:\s|$)", paragraph) is None
+        and len(numbers) >= len(words)
+        and (len(numbers) >= 5 or re.search(r"[.!?](?:\s|$)", paragraph) is None)
     )
+
+
+def table_payload(paragraph: str) -> bool:
+    return numeric_layout(paragraph) or len(NUMBER_TOKEN.findall(paragraph)) >= 10
 
 
 def ordered_list(paragraph: str) -> list[str] | None:
-    matches = list(
-        re.finditer(r"(?<!\w)(\d{1,2})\.\s+(?=[A-Z“\"(])", paragraph)
-    )
+    matches = list(re.finditer(r"(?<![\w.⁄])(\d{1,2})\.\s+(?=[A-Za-z“\"(])", paragraph))
+    matches = [match for match in matches if int(match.group(1)) < len(ORDINALS)]
     numbers = [int(match.group(1)) for match in matches]
-    if (
-        len(matches) < 2
-        or max(numbers) >= len(ORDINALS)
-        or numbers != list(range(numbers[0], numbers[0] + len(numbers)))
-    ):
+    if not matches:
+        return None
+    if len(matches) == 1 and matches[0].start() != 0:
+        return None
+    if numbers != list(range(numbers[0], numbers[0] + len(numbers))):
         return None
     parts: list[str] = []
     lead = paragraph[: matches[0].start()].strip()
@@ -452,30 +566,62 @@ def ordered_list(paragraph: str) -> list[str] | None:
     return parts
 
 
+def spoken_ordered_list(paragraph: str) -> list[str] | None:
+    labels = "|".join(ORDINALS[1:])
+    matches = list(re.finditer(rf"(?<!\w)({labels}),\s+", paragraph))
+    if len(matches) < 2 or matches[0].start() != 0:
+        return None
+    numbers = [ORDINALS.index(match.group(1)) for match in matches]
+    if numbers != list(range(numbers[0], numbers[0] + len(numbers))):
+        return None
+    return [
+        paragraph[match.start() : matches[index + 1].start()].strip()
+        if index + 1 < len(matches)
+        else paragraph[match.start() :].strip()
+        for index, match in enumerate(matches)
+    ]
+
+
 # 🧑 "re-OCR and re-audiolize the intelligent investor because it contains too many tables etc. that screw up the listening"
 def listenable_text(book_id: str, text: str) -> str:
     title = LISTENABLE_BOOK_TITLES.get(book_id)
     if title is None:
         return text
+    source_paragraphs: list[str] = []
+    for paragraph in text.split("\n\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        if (
+            source_paragraphs
+            and source_paragraphs[-1].endswith("-")
+            and paragraph[:1].islower()
+        ):
+            source_paragraphs[-1] = source_paragraphs[-1][:-1] + paragraph
+        else:
+            source_paragraphs.append(paragraph)
     paragraphs: list[str] = []
     layout_pending = False
+    seen_duplicate_headings: set[str] = set()
     layout_notice = (
-        "A visual data layout appears here in the source. Its rows and columns "
-        "have been omitted for listening; the surrounding text states the "
-        "comparison and conclusion."
+        "Sparse numeric visual data appears here in the source and has been omitted "
+        "for listening."
     )
-    for paragraph in text.split("\n\n"):
+    for paragraph in source_paragraphs:
+        if paragraph in ARTIFACT_PARAGRAPHS:
+            continue
         if (
-            (
-                PAGE_FURNITURE.fullmatch(paragraph)
-                or LEADING_PAGE_FURNITURE.fullmatch(paragraph)
-                or ROMAN_PAGE_FURNITURE.fullmatch(paragraph)
-            )
-            and not paragraph.startswith("CHAPTER ")
-        ):
+            PAGE_FURNITURE.fullmatch(paragraph)
+            or LEADING_PAGE_FURNITURE.fullmatch(paragraph)
+            or ROMAN_PAGE_FURNITURE.fullmatch(paragraph)
+        ) and not paragraph.startswith("CHAPTER "):
             continue
         if DATA_HEADER.fullmatch(paragraph):
             continue
+        if paragraph in DUPLICATE_HEADINGS.get(book_id, set()):
+            if paragraph in seen_duplicate_headings:
+                continue
+            seen_duplicate_headings.add(paragraph)
         if (
             paragraphs
             and paragraphs[-1].replace(" ", "").casefold()
@@ -491,6 +637,8 @@ def listenable_text(book_id: str, text: str) -> str:
             if paragraph.startswith(("Note:", "Notes:", "Source:")):
                 paragraphs.append(paragraph)
                 continue
+            if table_payload(paragraph):
+                continue
             if not narrative_paragraph(paragraph):
                 continue
             layout_pending = False
@@ -498,9 +646,14 @@ def listenable_text(book_id: str, text: str) -> str:
             if not paragraphs or paragraphs[-1] != layout_notice:
                 paragraphs.append(layout_notice)
             continue
+        spoken_parts = spoken_ordered_list(paragraph)
+        if spoken_parts is not None:
+            paragraphs.extend(spoken_parts)
+            continue
         ordered_parts = ordered_list(paragraph)
         if ordered_parts is not None:
-            paragraphs.extend(ordered_parts)
+            for part in ordered_parts:
+                paragraphs.extend(spoken_ordered_list(part) or [part])
             continue
         parts = paragraph.split("•")
         if parts[0].strip():
@@ -509,25 +662,23 @@ def listenable_text(book_id: str, text: str) -> str:
             f"Bullet point: {part.strip()}" for part in parts[1:] if part.strip()
         )
     body = "\n\n".join(paragraphs).strip()
-    return (
-        f"Below is document {title}.\n\n{body}\n\n"
-        f"Above was document {title}.\n"
-    )
+    return f"Below is document {title}.\n\n{body}\n\nAbove was document {title}.\n"
 
 
 def body_text(source: Path, book_id: str, cut: BookCut) -> str:
+    expected_source_sha256 = CUT_SOURCE_SHA256.get(book_id)
+    if expected_source_sha256 is not None:
+        actual_source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+        if actual_source_sha256 != expected_source_sha256:
+            raise SystemExit(
+                f"body cut requires source {expected_source_sha256}, got "
+                f"{actual_source_sha256}: {source}"
+            )
     paragraphs: list[str] = []
     lines: list[str] = []
     line_fixes = LINE_FIXES.get(book_id, {})
-    listenable_ranges = LISTENABLE_LINE_RANGES.get(book_id, ())
-    if listenable_ranges:
-        expected_sha256 = LISTENABLE_SOURCE_SHA256[book_id]
-        actual_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
-        if actual_sha256 != expected_sha256:
-            raise SystemExit(
-                f"listening cleanup ranges require source {expected_sha256}, got "
-                f"{actual_sha256}: {source}"
-            )
+    listenable_blocks = content_blocks(source, book_id, cut)
+    skip_through_line = 0
 
     def flush() -> None:
         nonlocal lines
@@ -541,20 +692,14 @@ def body_text(source: Path, book_id: str, cut: BookCut) -> str:
                 continue
             if line_number > cut.end_line:
                 break
-            range_match = next(
-                (
-                    (start_line, replacement)
-                    for start_line, end_line, replacement in listenable_ranges
-                    if start_line <= line_number <= end_line
-                ),
-                None,
-            )
-            if range_match is not None:
-                start_line, replacement = range_match
-                if line_number == start_line:
-                    flush()
-                    if replacement is not None:
-                        paragraphs.append(replacement)
+            if line_number <= skip_through_line:
+                continue
+            block = listenable_blocks.get(line_number)
+            if block is not None:
+                skip_through_line, replacement = block
+                flush()
+                if replacement is not None:
+                    paragraphs.append(replacement)
                 continue
             fixed = line_fixes.get(line_number, line)
             if fixed is None:

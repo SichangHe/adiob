@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import difflib
+import hashlib
 import importlib.util
 import json
 import os
@@ -84,53 +86,157 @@ def expect_exit(fn: Callable[[], object]) -> None:
 
 
 def check_listenable_layout(module: ModuleType) -> None:
+    numbered_prose = (
+        (Path(__file__).with_name("fixtures") / "listenable-numbered-prose.txt")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    label_heavy_table = (
+        (Path(__file__).with_name("fixtures") / "listenable-label-heavy-table.txt")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
     source = (
         "Commentary on Chapter 4 109\n\n"
         "FIGURE 4-1 The Wide World of Bonds 2002 1.2 2.7\n\n"
         "Type Maturity Yield 1 year 1.2 5 years 2.7\n\n"
-        "From the end of 1999 through 2002, a $3,000 investment plus $100 "
-        "monthly made a $6,600 total outlay and lost 30.2%, less than 41.3%.\n\n"
+        "Note: The values use annual averages.\n\n"
+        "Fund A 17.5% 20.1% 42.0% 3.2% 1.1% supplied by service.\n\n"
+        f"{label_heavy_table}\n\n"
+        f"{numbered_prose}\n\n"
         "Keep this complete narrative sentence because it explains the figure in context. "
         "• first choice • second choice\n"
         "\nFor 2003, a single person earning $28,400 paid the bottom tax rate.\n"
         "\nSee http://example.com/a/b/c/d/e/f/g for a prose explanation.\n"
-        "\n1. Keep the prose. 2. Spell out the list.\n"
+        "\n1. Keep the specifi-\n\ncation prose. 2. Spell out the list.\n"
+        "\n1. a mission 2. a producer 3. a schedule\n"
+        "\nSecond, keep this item. Third, split this run-on item.\n"
+        "\n30 30\n\nStandard &amp; Poor’s DJIA 500-Stock Composite\n"
     )
-    text = module.listenable_text(
-        "the-intelligent-investor-benjamin-graham", source
-    )
+    text = module.listenable_text("the-intelligent-investor-benjamin-graham", source)
     expected = (
         "Below is document The Intelligent Investor.\n\n"
-        "Figure 4-1, titled The Wide World of Bonds, presents the comparison "
-        "discussed in the surrounding text. Its visual row-and-column or "
-        "graphical layout has been replaced with this description for listening.\n\n"
-        "From the end of 1999 through 2002, a $3,000 investment plus $100 "
-        "monthly made a $6,600 total outlay and lost 30.2%, less than 41.3%.\n\n"
+        "Figure 4-1 is a visual layout in the source. Its graphical or row-and-column "
+        "content has been omitted for listening; the surrounding prose provides the "
+        "discussion.\n\n"
+        "Note: The values use annual averages.\n\n"
+        f"{numbered_prose}\n\n"
         "Keep this complete narrative sentence because it explains the figure in context.\n\n"
         "Bullet point: first choice\n\n"
         "Bullet point: second choice\n\n"
         "For 2003, a single person earning $28,400 paid the bottom tax rate.\n\n"
         "See http://example.com/a/b/c/d/e/f/g for a prose explanation.\n\n"
-        "First, Keep the prose.\n\n"
+        "First, Keep the specification prose.\n\n"
         "Second, Spell out the list.\n\n"
+        "First, a mission\n\n"
+        "Second, a producer\n\n"
+        "Third, a schedule\n\n"
+        "Second, keep this item.\n\n"
+        "Third, split this run-on item.\n\n"
+        "Sparse numeric visual data appears here in the source and has been omitted "
+        "for listening.\n\n"
         "Above was document The Intelligent Investor.\n"
     )
     if text != expected:
-        raise AssertionError("listening cleanup did not neutralize page layout")
+        diff = "".join(
+            difflib.unified_diff(
+                expected.splitlines(keepends=True),
+                text.splitlines(keepends=True),
+                fromfile="expected",
+                tofile="actual",
+            )
+        )
+        raise AssertionError(
+            f"listening cleanup did not neutralize page layout\n{diff}"
+        )
+    numbered_items = module.ordered_list(
+        "2. The second item ends at 721⁄4. The next sentence remains. "
+        "3. The third item ends at 22.5. (This note remains.) 77. Not a list marker."
+    )
+    if numbered_items != [
+        "Second, The second item ends at 721⁄4. The next sentence remains.",
+        "Third, The third item ends at 22.5. (This note remains.) 77. Not a list marker.",
+    ]:
+        raise AssertionError(
+            f"ordered-list prose was parsed incorrectly: {numbered_items}"
+        )
+    dotted_table = module.layout_description("TABLE 18-1A. noisy OCR caption 9 4 2")
+    if dotted_table is None or not dotted_table.startswith(
+        "Table 18-1A is a visual layout"
+    ):
+        raise AssertionError(
+            f"layout identifier was spoken incorrectly: {dotted_table}"
+        )
+    if module.layout_description("FIGURE . noisy OCR") != (
+        "An unlabeled visual layout appears here in the source and has been omitted "
+        "for listening."
+    ):
+        raise AssertionError("empty layout identifier produced malformed narration")
     with tempfile.TemporaryDirectory(prefix="adiob-cleaner-check-") as tmp:
         source = Path(tmp) / "source.txt"
-        source.write_text("narrative\n", encoding="utf-8")
-        module.LISTENABLE_LINE_RANGES["guard-test"] = ((1, 1, None),)
-        module.LISTENABLE_SOURCE_SHA256["guard-test"] = "0" * 64
+        block = "visual block\n"
+        digest = hashlib.sha256(block.encode()).hexdigest()
+        source.write_text(f"leading line\n{block}trailing line\n", encoding="utf-8")
+        module.LISTENABLE_CONTENT_BLOCKS["guard-test"] = ((1, digest, None),)
+        module.CUT_SOURCE_SHA256["guard-test"] = hashlib.sha256(
+            source.read_bytes()
+        ).hexdigest()
         try:
+            cleaned = module.body_text(
+                source, "guard-test", module.BookCut(1, 3, "test")
+            )
+            if cleaned != "leading line\n\ntrailing line\n":
+                raise AssertionError(
+                    f"content-bound cleanup did not survive line drift: {cleaned!r}"
+                )
+            source.write_text(
+                f"inserted line\nleading line\n{block}trailing line\n",
+                encoding="utf-8",
+            )
             expect_exit(
                 lambda: module.body_text(
-                    source, "guard-test", module.BookCut(1, 1, "test")
+                    source, "guard-test", module.BookCut(1, 3, "test")
+                )
+            )
+            module.CUT_SOURCE_SHA256["guard-test"] = hashlib.sha256(
+                source.read_bytes()
+            ).hexdigest()
+            shifted = module.body_text(
+                source, "guard-test", module.BookCut(1, 4, "test")
+            )
+            if shifted != "inserted line leading line\n\ntrailing line\n":
+                raise AssertionError(
+                    f"content-bound cleanup did not find a shifted block: {shifted!r}"
+                )
+            source.write_text(
+                "inserted line\nleading line\nchanged block\ntrailing line\n",
+                encoding="utf-8",
+            )
+            module.CUT_SOURCE_SHA256["guard-test"] = hashlib.sha256(
+                source.read_bytes()
+            ).hexdigest()
+            expect_exit(
+                lambda: module.body_text(
+                    source, "guard-test", module.BookCut(1, 4, "test")
                 )
             )
         finally:
-            del module.LISTENABLE_LINE_RANGES["guard-test"]
-            del module.LISTENABLE_SOURCE_SHA256["guard-test"]
+            del module.LISTENABLE_CONTENT_BLOCKS["guard-test"]
+            del module.CUT_SOURCE_SHA256["guard-test"]
+
+    mythical = module.listenable_text(
+        "mythical-man-month",
+        "viii Preface\n\nPreface ix\n\nTheTarPit\n\nThe Tar Pit\n\n"
+        "I am ordinary prose without final punctuation\n\n"
+        "This narrative paragraph remains after the first title and has a period.\n\n"
+        "The Tar Pit\n\nThis second narrative paragraph also remains intact.\n",
+    )
+    if any(value in mythical for value in ("viii Preface", "Preface ix", "TheTarPit")):
+        raise AssertionError("Mythical Man-Month page furniture survived cleanup")
+    if mythical.count("The Tar Pit") != 1:
+        raise AssertionError("duplicated Mythical Man-Month title survived cleanup")
+    if "I am ordinary prose without final punctuation" not in mythical:
+        raise AssertionError("ordinary prose was mistaken for Roman page furniture")
 
 
 def with_fake_repo(module: ModuleType, root: Path) -> None:
