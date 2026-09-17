@@ -29,7 +29,7 @@ jobs:
       - name: fetch private book artifacts
         env:
           PRIVATE_BOOK_ARTIFACT_REPO: SichangHe/adiob-private-artifacts
-          PRIVATE_BOOK_ARTIFACT_REF: 406b177f61a88147336eb0f308e8485739aff8da
+          PRIVATE_BOOK_ARTIFACT_REF: bea7e0cf0e002a05c92c013d365a1d716f1c43c7
           PRIVATE_BOOK_ARTIFACTS_TOKEN: ${{ secrets.PRIVATE_BOOK_ARTIFACTS_TOKEN }}
         run: |
           scripts/fetch-private-book-artifacts.sh _private-books
