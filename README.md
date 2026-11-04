@@ -64,6 +64,15 @@ The release script requires `origin` to match `OWNER/REPO` before a real upload.
 
 The internal reader UI plays `audioChunks` when present. Chunk paths can be manifest-relative files or public GitHub Release asset URLs. Without chunks, it tries `releaseAudio.url` first and falls back to `audio` if the release asset cannot be loaded. Entries from both private catalogs appear in the reader; UI access does not restrict direct access to release assets.
 
+Publish every book that has local generated audio under `local/owned-books/<book>/chunks`:
+
+```sh
+scripts/publish-all-audiobooks.sh            # dry run: lists what would be cataloged and uploaded
+scripts/publish-all-audiobooks.sh --publish  # catalog, upload release audio, push indexes, deploy Pages
+```
+
+Books missing from the private catalogs are added to `internal-books.json`, with text from `owned-text/<book>.txt` or else the local manifest segments, and committed in the private repository. Book directory names must be lowercase letters, digits, and `-`. It then runs `scripts/publish-private-audiobooks.py`, which reuses local chunks whose text and voice fingerprints match and generates the rest.
+
 GitHub Actions stages both private catalogs and deploys the combined site to GitHub Pages. The repository secret `PRIVATE_BOOK_ARTIFACTS_TOKEN` must read the private artifact repository. The publication entry point pins each deployment to the private commit it verified; see `docs/workflow.md`.
 
 The `-10` and `+10` buttons seek by seconds. Use the Speed menu to change playback tempo in the browser without regenerating audio.
@@ -115,5 +124,3 @@ Segment timing can be paragraph-level or sentence-level. The public sample uses 
 The included sample text, timing data, generated audio, and cover image are original demo assets released as `CC0-1.0`. Code is under `MIT`.
 
 See `ASSET-LICENSE.md` for the sample asset notice.
-
-For a public GitHub Pages deployment, only publish books, text, covers, and audio that you have the right to distribute. This prototype intentionally does not include copyrighted book ingestion or any mechanism for hiding infringement.
