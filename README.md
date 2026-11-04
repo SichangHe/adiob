@@ -71,7 +71,7 @@ scripts/publish-all-audiobooks.sh            # dry run: lists what would be cata
 scripts/publish-all-audiobooks.sh --publish  # catalog, upload release audio, push indexes, deploy Pages
 ```
 
-Books missing from the private catalogs are added to `internal-books.json`, with text from `owned-text/<book>.txt` or else the local manifest segments, and committed in the private repository. Book directory names must be lowercase letters, digits, and `-`. It then runs `scripts/publish-private-audiobooks.py`, which reuses local chunks whose text and voice fingerprints match and generates the rest.
+Books missing from the private catalogs are added to `internal-books.json`, with text from `owned-text/<book>.txt` or else the local manifest segments, and committed in the private repository. Book directory names must be lowercase letters, digits, and `-`. It then runs `scripts/publish-private-audiobooks.py`, which reuses local chunks whose text, voice, and language match and generates the rest. Audio generation is lazy by default; pass `--regenerate` to `scripts/generate-kokoro-audio.py` to force a redo.
 
 GitHub Actions stages both private catalogs and deploys the combined site to GitHub Pages. The repository secret `PRIVATE_BOOK_ARTIFACTS_TOKEN` must read the private artifact repository. The publication entry point pins each deployment to the private commit it verified; see `docs/workflow.md`.
 

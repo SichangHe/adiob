@@ -59,6 +59,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--voice", default="af_heart", help="Kokoro voice id.")
     parser.add_argument(
+        "--regenerate",
+        action="store_true",
+        help="Regenerate audio chunks even when matching audio exists.",
+    )
+    parser.add_argument(
         "--lang", default="a", help="Kokoro language code. `a` is American English."
     )
     parser.add_argument(
@@ -571,10 +576,17 @@ def generate_chunked_audio(
             args.max_tts_chars,
             args.batch_segments,
         )
+        # 🤖 lazy by default: reuse audio whose text, voice, and language match,
+        # even if it was generated with other TTS splitting settings
+        accepted = {
+            chunk_fingerprint(chunk_segments, args.lang, args.voice, chars, batch)
+            for chars in {args.max_tts_chars, 1800}
+            for batch in (True, False)
+        }
         if (
-            args.batch_segments
+            not args.regenerate
             and audio_out.is_file()
-            and read_fingerprint(audio_out) == fingerprint
+            and read_fingerprint(audio_out) in accepted
         ):
             duration_sec = probe_duration_sec(audio_out)
             timings = estimated_timings(chunk_segments, duration_sec)
@@ -592,8 +604,7 @@ def generate_chunked_audio(
                 )
                 encode_audio(wav, audio_out)
             duration_sec = probe_duration_sec(audio_out)
-            if args.batch_segments:
-                write_fingerprint(audio_out, fingerprint)
+            write_fingerprint(audio_out, fingerprint)
             print(f"wrote {audio_out} ({duration_sec:.3f}s)")
         raw_duration_sec = timings[-1][1]
         if raw_duration_sec <= 0:
